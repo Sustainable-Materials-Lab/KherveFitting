@@ -40,7 +40,9 @@ from libraries.FileMenu.Save import save_vamas_file_dialog
 from libraries.ToolsMenu.VB_measurements import VB_measurements
 from libraries.ToolsMenu.PlotModWindow import PlotModWindow
 from libraries.UsageAnalytics import show_usage_stats_window
-from libraries.FileMenu.Open import import_generic_excel_file  # Add this line
+from libraries.FileMenu.Open import import_generic_excel_file
+from libraries.FileMenu.Igor import import_igor_dat_file, import_igor_itx_file, import_multiple_igor_files
+from libraries.FileMenu.VGD_Import import import_vgd_file, import_multiple_vgd_files
 
 # With conditional imports:
 import platform
@@ -773,78 +775,100 @@ def create_menu(window):
     window.Bind(wx.EVT_MENU, lambda event: on_save_as(window), save_as_item)
 
     # Import submenu items
-    import_generic_excel_item = import_menu.Append(wx.NewId(), "Import Generic Excel File (Interactive)")
+    import_generic_excel_item = import_menu.Append(wx.NewId(), "Generic Excel File (Interactive)")
     window.Bind(wx.EVT_MENU, lambda event: import_generic_excel_file(window), import_generic_excel_item)
 
-    import_avantage_item = import_menu.Append(wx.NewId(), "Import Avantage Data file (.xlsx or .xls)")
+    Import_xps_header = import_menu.Append(wx.ID_ANY, "▬▬▬▬▬▬▬▬ XPS Technique ▬▬▬▬▬▬▬▬▬")
+    Import_xps_header.Enable(False)  # Make it non-clickable
+
+    import_avantage_item = import_menu.Append(wx.NewId(), "Thermo Avantage Data file (.xlsx or .xls)")
     window.Bind(wx.EVT_MENU, lambda event: import_avantage_file(window), import_avantage_item)
 
-    import_multiple_avantage_item = import_menu.Append(wx.NewId(), "Import Multiple Avantage xlsx files (folder)")
+    import_multiple_avantage_item = import_menu.Append(wx.NewId(), "Thermo Avantage Multiple xlsx files (folder)")
     window.Bind(wx.EVT_MENU, lambda event: import_multiple_avantage_files(window), import_multiple_avantage_item)
 
-    import_vamas_item = import_menu.Append(wx.NewId(), "Import Vamas Data file (.vms)")
+    vgd_item = import_menu.Append(wx.ID_ANY, "Thermo Avantage VGD file (.vgd)", "Import Thermo VGD file")
+    window.Bind(wx.EVT_MENU, lambda evt: import_vgd_file(window), vgd_item)
+
+    vgd_multi = import_menu.Append(wx.ID_ANY, "Thermo Avantage VGD Multiple files (folder)", "Import multiple VGD files")
+    window.Bind(wx.EVT_MENU, lambda evt: import_multiple_vgd_files(window), vgd_multi)
+
+    import_avg_item = import_menu.Append(wx.NewId(), "Thermo AVG file (.avg)")
+    window.Bind(wx.EVT_MENU, lambda event: open_avg_file(window), import_avg_item)
+
+    import_multiple_avg_item = import_menu.Append(wx.NewId(), "Thermo AVG Multiple files .avg (folder)")
+    window.Bind(wx.EVT_MENU, lambda event: import_multiple_avg_files(window), import_multiple_avg_item)
+
+    import_vamas_item = import_menu.Append(wx.NewId(), "Vamas Data file (.vms)")
     window.Bind(wx.EVT_MENU, lambda event: open_vamas_file_dialog(window), import_vamas_item)
 
-    import_kal_item = import_menu.Append(wx.NewId(), "Import Kratos Data file (.kal)")
+    import_kal_item = import_menu.Append(wx.NewId(), "Kratos Data file (.kal)")
     window.Bind(wx.EVT_MENU, lambda event: open_kal_file_dialog(window), import_kal_item)
 
-    import_spe_item = import_menu.Append(wx.NewId(), "Import Phi Data file (.spe)")
+    import_spe_item = import_menu.Append(wx.NewId(), "Phi Data file (.spe)")
     window.Bind(wx.EVT_MENU, lambda event: open_spe_file_dialog(window), import_spe_item)
 
     # Add MRS file import items
-    import_mrs_item = import_menu.Append(wx.NewId(), "Import MRS Data file (.mrs)")
+    import_mrs_item = import_menu.Append(wx.NewId(), "MRS Data file (.mrs)")
     window.Bind(wx.EVT_MENU, lambda event: import_mrs_file(window), import_mrs_item)
 
-    import_multiple_mrs_item = import_menu.Append(wx.NewId(), "Import Multiple MRS files (folder)")
+    import_multiple_mrs_item = import_menu.Append(wx.NewId(), "MRS Multiple files .mrs (folder)")
     window.Bind(wx.EVT_MENU, lambda event: import_multiple_mrs_files(window), import_multiple_mrs_item)
 
-    import_avg_item = import_menu.Append(wx.NewId(), "Import AVG file (.avg)")
-    window.Bind(wx.EVT_MENU, lambda event: open_avg_file(window), import_avg_item)
-
-    import_multiple_avg_item = import_menu.Append(wx.NewId(), "Import Multiple AVG files (folder)")
-    window.Bind(wx.EVT_MENU, lambda event: import_multiple_avg_files(window), import_multiple_avg_item)
-
-    # Import ASC files
-    import_xps_asc_item = import_menu.Append(wx.NewId(), "Import XPS .asc file")
-    window.Bind(wx.EVT_MENU, lambda event: import_xps_asc_file(window), import_xps_asc_item)
-
-    import_multiple_xps_asc_item = import_menu.Append(wx.NewId(), "Import Multiple XPS .asc files (folder)")
-    window.Bind(wx.EVT_MENU, lambda event: import_multiple_xps_asc_files(window), import_multiple_xps_asc_item)
-
     # Import VG Microtech
-    import_vg_microtech_item = import_menu.Append(wx.NewId(), "Import VG-Microtech file (.1)")
+    import_vg_microtech_item = import_menu.Append(wx.NewId(), "VG-Microtech file (.1)")
     window.Bind(wx.EVT_MENU, lambda event: open_vg_microtech_file_dialog(window), import_vg_microtech_item)
 
-    import_multiple_vg_microtech_item = import_menu.Append(wx.NewId(), "Import Multiple VG-Microtech files (folder)")
+    import_multiple_vg_microtech_item = import_menu.Append(wx.NewId(), "VG-Microtech Multiple files (folder)")
     window.Bind(wx.EVT_MENU, lambda event: import_multiple_vg_microtech_files(window),
                 import_multiple_vg_microtech_item)
 
+    # Import ASC files
+    import_xps_asc_item = import_menu.Append(wx.NewId(), "XPS .asc file (from Surface Science Spectra)")
+    window.Bind(wx.EVT_MENU, lambda event: import_xps_asc_file(window), import_xps_asc_item)
+
+    import_multiple_xps_asc_item = import_menu.Append(wx.NewId(), "XPS .asc Multiple files (from Surface Science Spectra)")
+    window.Bind(wx.EVT_MENU, lambda event: import_multiple_xps_asc_files(window), import_multiple_xps_asc_item)
+
     # Import CSV files
-    import_xps_csv_item = import_menu.Append(wx.NewId(), "Import XPS .csv file")
+    import_xps_csv_item = import_menu.Append(wx.NewId(), "XPS .csv file")
     window.Bind(wx.EVT_MENU, lambda event: import_xps_csv_file(window), import_xps_csv_item)
 
-    import_multiple_xps_csv_item = import_menu.Append(wx.NewId(), "Import Multiple XPS .csv files (folder)")
+    import_multiple_xps_csv_item = import_menu.Append(wx.NewId(), "XPS .csv Multiple files (folder)")
     window.Bind(wx.EVT_MENU, lambda event: import_multiple_xps_csv_files(window), import_multiple_xps_csv_item)
 
-    import_raman_item = import_menu.Append(wx.NewId(), "Import Raman .txt file")
+    igor_itx_item = import_menu.Append(wx.ID_ANY, "Igor .itx file", "Import Igor .itx file")
+    window.Bind(wx.EVT_MENU, lambda evt: import_igor_itx_file(window), igor_itx_item)
+
+    # In your create_menu function, within the Import submenu section
+    igor_dat_item = import_menu.Append(wx.ID_ANY, "Igor .dat file", "Import Igor .dat file")
+    window.Bind(wx.EVT_MENU, lambda evt: import_igor_dat_file(window), igor_dat_item)
+
+    igor_multiple_item = import_menu.Append(wx.ID_ANY, "Igor Multiple files", "Import multiple Igor .dat/.itx files")
+    window.Bind(wx.EVT_MENU, lambda evt: import_multiple_igor_files(window), igor_multiple_item)
+
+    Import_Other_header = import_menu.Append(wx.ID_ANY, "▬▬▬▬▬▬▬▬ Other Techniques ▬▬▬▬▬▬▬▬▬")
+    Import_Other_header.Enable(False)  # Make it non-clickable
+
+    import_raman_item = import_menu.Append(wx.NewId(), "Raman .txt file")
     window.Bind(wx.EVT_MENU, lambda event: import_raman_txt_file(window), import_raman_item)
 
-    import_multiple_raman_item = import_menu.Append(wx.NewId(), "Import Multiple Raman .txt files (folder)")
+    import_multiple_raman_item = import_menu.Append(wx.NewId(), "Raman Multiple .txt files (folder)")
     window.Bind(wx.EVT_MENU, lambda event: import_multiple_raman_files(window), import_multiple_raman_item)
 
     # Import Diamond-B07-XAS files
-    import_diamond_b07_xas_item = import_menu.Append(wx.NewId(), "Import Diamond-B07-XAS file (.txt/.dat)")
+    import_diamond_b07_xas_item = import_menu.Append(wx.NewId(), "XAS Diamond-B07 file (.txt/.dat)")
     window.Bind(wx.EVT_MENU, lambda event: import_diamond_b07_xas_file(window), import_diamond_b07_xas_item)
 
-    import_multiple_diamond_b07_xas_item = import_menu.Append(wx.NewId(), "Import Multiple Diamond-B07-XAS files (folder)")
+    import_multiple_diamond_b07_xas_item = import_menu.Append(wx.NewId(), "XAS Multiple Diamond-B07 files (folder)")
     window.Bind(wx.EVT_MENU, lambda event: import_multiple_diamond_b07_xas_files(window), import_multiple_diamond_b07_xas_item)
 
     # Import EDX Map
-    import_edx_map_item = import_menu.Append(wx.NewId(), "Import EDX Map (.hdf5)")
+    import_edx_map_item = import_menu.Append(wx.NewId(), "EDX Map (.hdf5)")
     window.Bind(wx.EVT_MENU, lambda event: import_edx_map_file(window), import_edx_map_item)
 
     # Import EELS Map
-    import_eels_map_item = import_menu.Append(wx.NewId(), "Import EELS Map (.dm3/.dm4)")
+    import_eels_map_item = import_menu.Append(wx.NewId(), "EELS Map (.dm3/.dm4)")
     window.Bind(wx.EVT_MENU, lambda event: import_eels_map_file(window), import_eels_map_item)
 
     # Export submenu items
