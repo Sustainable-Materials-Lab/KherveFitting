@@ -222,8 +222,8 @@ def import_igor_itx_file(window, file_path=None):
             line = lines[i].strip()
 
             if line.startswith('WAVES'):
-                # Extract wave name
-                wave_name_match = re.search(r"WAVES\s+'([^']+)'", line)
+                # Extract wave name - handle WAVES, WAVES/D, WAVES/T, etc.
+                wave_name_match = re.search(r"WAVES[/\w]*\s+'([^']+)'", line)
                 if not wave_name_match:
                     i += 1
                     continue
@@ -270,8 +270,8 @@ def import_igor_itx_file(window, file_path=None):
 
                                 # Create BE array
                                 be_array = np.arange(start_be,
-                                                    start_be + step * len(data_values),
-                                                    step)[:len(data_values)]
+                                                     start_be + step * len(data_values),
+                                                     step)[:len(data_values)]
                                 waves_data[f'{wave_name}_BE'] = be_array
 
             i += 1
@@ -290,9 +290,44 @@ def import_igor_itx_file(window, file_path=None):
 
             match = re.search(sample_pattern, wave_name)
             if match:
+                # Standard pattern: [All CoreLevel] SampleName
                 core_level_raw = match.group(1)
                 sample_name = match.group(2)
                 core_level = core_level_raw.replace(' ', '')
+
+                samples_info.append({
+                    'sample_name': sample_name,
+                    'core_level': core_level,
+                    'wave_name': wave_name
+                })
+            else:
+                # Alternative pattern: extract from wave name directly
+                # Try to extract core level from wave name (e.g., O1s, C1s, etc.)
+                core_level_match = re.search(r'([A-Z][a-z]?\d[spdf])', wave_name)
+                if core_level_match:
+                    core_level = core_level_match.group(1)
+                # Check for valence band patterns
+                elif '_V' in wave_name or 'VB' in wave_name.upper() or 'valence' in wave_name.lower():
+                    # Extract valence band range if present
+                    vb_range_match = re.search(r'_V\(([\d.]+)\s+to\s+([\d.]+)\)', wave_name)
+                    if vb_range_match:
+                        core_level = f"VB_{vb_range_match.group(1)}to{vb_range_match.group(2)}"
+                    else:
+                        core_level = 'VB'
+                # Check for other energy ranges with "eV"
+                elif 'eV' in wave_name:
+                    # Try to extract energy information
+                    ev_match = re.search(r'([\d.]+)\s*eV', wave_name)
+                    if ev_match:
+                        core_level = f"{ev_match.group(1)}eV"
+                    else:
+                        core_level = 'Spectrum'
+                else:
+                    # Use a generic name if no core level found
+                    core_level = 'Unknown'
+
+                # Use wave name as sample name, cleaned up
+                sample_name = wave_name.strip("'").replace('.txt', '').replace('.itx', '')
 
                 samples_info.append({
                     'sample_name': sample_name,
