@@ -30,10 +30,10 @@ class ExcelDropTarget(wx.FileDropTarget):
         # Check all files are valid first
         for file in filenames:
             if not any(file.lower().endswith(ext) for ext in ['.xlsx', '.xls', '.vms', '.kal',
-                                                              '.avg', '.spe', '.mrs', '.1', '.asc']):
+                                                              '.avg', '.spe', '.mrs', '.1', '.asc', '.vgd']):
                 wx.MessageBox(f"Only .xlsx/.xls (Khervefitting or Avantage), .vms (Vamas), "
-                              f".kal (Kratos), .avg (Thermo), .mrs, .1 (VG-Microtech), .asc and .spe "
-                              f"(Phi) files can be dropped.", "Invalid File Type",
+                              f".kal (Kratos), .avg (Thermo), .mrs, .1 (VG-Microtech), .asc, .spe "
+                              f"(Phi) and .vgd (Thermo VGD) files can be dropped.", "Invalid File Type",
                               wx.OK | wx.ICON_ERROR)
                 return False
 
@@ -244,6 +244,10 @@ class ExcelDropTarget(wx.FileDropTarget):
             from libraries.FileMenu.Open import import_xps_asc_file_direct
             wx.CallAfter(import_xps_asc_file_direct, self.window, file)
             return True
+        elif file.lower().endswith('.vgd'):
+            from libraries.FileMenu.VGD_Import import import_vgd_file
+            wx.CallAfter(import_vgd_file, self.window, file, False)
+            return True
         return False
 
     def _is_numeric(self, value):
@@ -256,104 +260,6 @@ class ExcelDropTarget(wx.FileDropTarget):
         except (ValueError, TypeError):
             return False
 
-
-
-    def _process_multiple_dropped_files_OLD(self, filenames):
-        """Process multiple dropped files by grouping them by type"""
-        # Group files by type
-        file_groups = {
-            'khervefitting_xlsx': [],
-            'khervefitting_xls': [],
-            'avantage_xlsx': [],
-            'avantage_xls': [],
-            'vms': [],
-            'kal': [],
-            'avg': [],
-            'spe': [],
-            'mrs': [],
-            'vg': []
-        }
-
-        # Categorize files
-        for file in filenames:
-            file_lower = file.lower()
-
-            if file_lower.endswith('.xlsx'):
-                try:
-                    wb = openpyxl.load_workbook(file)
-                    if "Titles" in wb.sheetnames:
-                        file_groups['avantage_xlsx'].append(file)
-                    else:
-                        file_groups['khervefitting_xlsx'].append(file)
-                    wb.close()
-                except Exception:
-                    file_groups['khervefitting_xlsx'].append(file)
-
-            elif file_lower.endswith('.xls'):
-                try:
-                    wb = xlrd.open_workbook(file)
-                    if "Titles" in wb.sheet_names():
-                        file_groups['avantage_xls'].append(file)
-                    else:
-                        file_groups['khervefitting_xls'].append(file)
-                    wb.close()
-                except Exception:
-                    file_groups['khervefitting_xls'].append(file)
-
-            elif file_lower.endswith('.vms'):
-                file_groups['vms'].append(file)
-            elif file_lower.endswith('.kal'):
-                file_groups['kal'].append(file)
-            elif file_lower.endswith('.avg'):
-                file_groups['avg'].append(file)
-            elif file_lower.endswith('.spe'):
-                file_groups['spe'].append(file)
-            elif file_lower.endswith('.mrs'):
-                file_groups['mrs'].append(file)
-            elif file_lower.endswith('.1'):
-                file_groups['vg'].append(file)
-
-        # Process each group
-        success = True
-
-        # Process KherveFitting files
-        all_khervefitting = file_groups['khervefitting_xlsx'] + file_groups['khervefitting_xls']
-        if len(all_khervefitting) > 1:
-            wx.CallAfter(self._import_multiple_khervefitting_direct, all_khervefitting)
-        elif len(all_khervefitting) == 1:
-            success &= self._process_single_dropped_file(all_khervefitting[0])
-
-        # Process Avantage files
-        all_avantage = file_groups['avantage_xlsx'] + file_groups['avantage_xls']
-        if len(all_avantage) > 1:
-            wx.CallAfter(self._import_multiple_avantage_direct, all_avantage)
-        elif len(all_avantage) == 1:
-            success &= self._process_single_dropped_file(all_avantage[0])
-
-        # Process MRS files
-        if len(file_groups['mrs']) > 1:
-            wx.CallAfter(self._import_multiple_mrs_direct, file_groups['mrs'])
-        elif len(file_groups['mrs']) == 1:
-            success &= self._process_single_dropped_file(file_groups['mrs'][0])
-
-        # Process AVG files
-        if len(file_groups['avg']) > 1:
-            wx.CallAfter(self._import_multiple_avg_direct, file_groups['avg'])
-        elif len(file_groups['avg']) == 1:
-            success &= self._process_single_dropped_file(file_groups['avg'][0])
-
-        # Process VG-Microtech files
-        if len(file_groups['vg']) > 1:
-            wx.CallAfter(self._import_multiple_vg_direct, file_groups['vg'])
-        elif len(file_groups['vg']) == 1:
-            success &= self._process_single_dropped_file(file_groups['vg'][0])
-
-        # Process other file types individually (no batch import available)
-        for file_type in ['vms', 'kal', 'spe']:
-            for file in file_groups[file_type]:
-                success &= self._process_single_dropped_file(file)
-
-        return success
 
     def _process_multiple_dropped_files(self, filenames):
         """Process multiple dropped files by grouping them by type"""
@@ -371,6 +277,7 @@ class ExcelDropTarget(wx.FileDropTarget):
             'spe': [],
             'mrs': [],
             'vg': [],
+            'vgd': [],
             'asc': []
         }
 
@@ -484,6 +391,8 @@ class ExcelDropTarget(wx.FileDropTarget):
                 file_groups['vg'].append(file)
             elif file_lower.endswith('.asc'):
                 file_groups['asc'].append(file)
+            elif file_lower.endswith('.vgd'):
+                file_groups['vgd'].append(file)
 
         # Process each group
         success = True
@@ -530,6 +439,13 @@ class ExcelDropTarget(wx.FileDropTarget):
             wx.CallAfter(self._import_multiple_asc_direct, file_groups['asc'])
         elif len(file_groups['asc']) == 1:
             success &= self._process_single_dropped_file(file_groups['asc'][0])
+
+        # Process VGD files
+        if len(file_groups['vgd']) > 1:
+            from libraries.FileMenu.VGD_Import import import_multiple_vgd_files
+            wx.CallAfter(import_multiple_vgd_files, self.window, file_groups['vgd'], False)
+        elif len(file_groups['vgd']) == 1:
+            success &= self._process_single_dropped_file(file_groups['vgd'][0])
 
         # Process other file types individually (no batch import available)
         for file_type in ['vms', 'kal', 'spe']:

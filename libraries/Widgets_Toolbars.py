@@ -41,7 +41,7 @@ from libraries.ToolsMenu.VB_measurements import VB_measurements
 from libraries.ToolsMenu.PlotModWindow import PlotModWindow
 from libraries.UsageAnalytics import show_usage_stats_window
 from libraries.FileMenu.Open import import_generic_excel_file
-from libraries.FileMenu.Igor import import_igor_dat_file, import_igor_itx_file, import_multiple_igor_files
+from libraries.FileMenu.Igor_Import import import_igor_dat_file, import_igor_itx_file, import_multiple_igor_files
 from libraries.FileMenu.VGD_Import import import_vgd_file, import_multiple_vgd_files
 
 # With conditional imports:
