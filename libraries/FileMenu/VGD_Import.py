@@ -305,15 +305,40 @@ def import_vgd_file(window, file_path=None, show_message=False):
                 return
             file_path = fileDialog.GetPath()
 
+    # Create console window centered on parent
+    parent_pos = window.GetPosition()
+    parent_size = window.GetSize()
+    console_frame = wx.Frame(window, title="Importing VGD File", size=(400, 350))
+    console_frame.SetPosition((
+        parent_pos.x + (parent_size.width - 400) // 2,
+        parent_pos.y + (parent_size.height - 350) // 2
+    ))
+    console_text = wx.TextCtrl(console_frame, style=wx.TE_MULTILINE | wx.TE_READONLY)
+    console_frame.Show()
+
+    def update_console(message):
+        console_text.AppendText(message + '\n')
+        console_text.Update()
+        wx.SafeYield()
+
     try:
         # Parse VGD file
+        update_console(f"Opening: {os.path.basename(file_path)}")
         parsed_data = parse_vgd_file(file_path)
 
         num_spectra = parsed_data.get('num_spectra', 1)
+        update_console(f"  Points per spectrum: {parsed_data['num_points']}")
+        update_console(f"  Number of spectra: {num_spectra}")
+        update_console(f"  Source Energy: {parsed_data['source_energy']:.2f} eV")
+        if parsed_data['pass_energy']:
+            update_console(f"  Pass Energy: {parsed_data['pass_energy']:.1f} eV")
+        if parsed_data['dwell_time'] and parsed_data['periods']:
+            update_console(f"  Dwell: {parsed_data['dwell_time']:.4f} s, Periods: {parsed_data['periods']}")
 
         # Extract core level name from filename
         base_name = os.path.splitext(os.path.basename(file_path))[0]
         core_level = extract_core_level_name(os.path.basename(file_path))
+        update_console(f"  Core level: {core_level}")
 
         # Get metadata
         meta = parsed_data['metadata']
@@ -324,6 +349,7 @@ def import_vgd_file(window, file_path=None, show_message=False):
         output_dir = os.path.dirname(file_path)
         excel_path = os.path.join(output_dir, f"{base_name}.xlsx")
 
+        update_console(f"\nCreating Excel file...")
         wb = openpyxl.Workbook()
         wb.remove(wb.active)
 
@@ -333,14 +359,20 @@ def import_vgd_file(window, file_path=None, show_message=False):
         for spectrum_idx in range(num_spectra):
             calc_data = calculate_vgd_data(parsed_data, spectrum_idx)
 
-            # Create sheet name: Pt4f0, Pt4f1, Pt4f2, etc.
-            sheet_name = f"{core_level}{spectrum_idx}"
+            # Create sheet name: Pt4f, Pt4f1, Pt4f2, etc. (first has no number)
+            if spectrum_idx == 0:
+                sheet_name = f"{core_level}"
+            else:
+                sheet_name = f"{core_level}{spectrum_idx}"
             sheet_names.append(sheet_name)
+
+            # Update console for all sheets
+            update_console(f"  Processing: {sheet_name}")
 
             ws = wb.create_sheet(sheet_name)
 
             # Write headers
-            ws.cell(row=1, column=1, value='B.E.')
+            ws.cell(row=1, column=1, value='BE')
             ws.cell(row=1, column=2, value='Corrected Data')
             ws.cell(row=1, column=3, value='Raw Data')
             ws.cell(row=1, column=4, value='Transmission')
@@ -397,12 +429,16 @@ def import_vgd_file(window, file_path=None, show_message=False):
             ws.column_dimensions[openpyxl.utils.get_column_letter(exp_col)].width = 25
             ws.column_dimensions[openpyxl.utils.get_column_letter(exp_col + 1)].width = 40
 
+        update_console(f"Saving: {os.path.basename(excel_path)}")
         wb.save(excel_path)
+        update_console(f"  Created {len(sheet_names)} sheet(s)")
 
         # Import into KherveFitting
         from libraries.ConfigFile import Init_Measurement_Data, add_core_level_Data
         from libraries.FileMenu.Save import update_undo_redo_state, save_state, convert_to_serializable_and_round
         from libraries.Sheet_Operations import on_sheet_selected
+
+        update_console(f"\nImporting to KherveFitting...")
 
         window.Data = Init_Measurement_Data(window)
         window.Data['FilePath'] = excel_path
@@ -416,12 +452,14 @@ def import_vgd_file(window, file_path=None, show_message=False):
             window.results_grid.DeleteRows(0, window.results_grid.GetNumberRows())
 
         # Add all core levels/spectra
-        for sheet_name in sheet_names:
+        for idx, sheet_name in enumerate(sheet_names):
             add_core_level_Data(window.Data, window, excel_path, sheet_name)
+            update_console(f"  Imported: {sheet_name}")
 
         sample_name = meta['subject'] if meta['subject'] else base_name
         window.Data['SampleNames'] = {0: sample_name}
 
+        update_console(f"Creating JSON file...")
         json_path = excel_path.replace('.xlsx', '.json')
         serializable_data = convert_to_serializable_and_round(window.Data)
         with open(json_path, 'w') as f:
@@ -436,17 +474,20 @@ def import_vgd_file(window, file_path=None, show_message=False):
         on_sheet_selected(window, None)
         save_state(window)
 
-        if show_message:
-            if num_spectra > 1:
-                wx.MessageBox(f"VGD file imported: {core_level} ({num_spectra} spectra)",
-                              "Import Successful", wx.OK | wx.ICON_INFORMATION)
-            else:
-                wx.MessageBox(f"VGD file imported: {core_level}",
-                              "Import Successful", wx.OK | wx.ICON_INFORMATION)
+        update_console(f"\nImport complete!")
+        if num_spectra > 1:
+            update_console(f"  {core_level}: {num_spectra} spectra imported")
+        else:
+            update_console(f"  {core_level}: 1 spectrum imported")
+
+        # Close console after delay
+        wx.CallLater(1500, console_frame.Close)
 
     except Exception as e:
         import traceback
         traceback.print_exc()
+        update_console(f"\nError: {str(e)}")
+        wx.CallLater(3000, console_frame.Close)
         wx.MessageBox(f"Error importing VGD file:\n\n{str(e)}", "Error", wx.OK | wx.ICON_ERROR)
 
 
@@ -470,8 +511,8 @@ def import_multiple_vgd_files(window, file_paths=None, show_message=False):
 
     if file_paths is None:
         with wx.FileDialog(window, "Select VGD files",
-                          wildcard="VGD files (*.vgd;*.VGD)|*.vgd;*.VGD",
-                          style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST | wx.FD_MULTIPLE) as fileDialog:
+                           wildcard="VGD files (*.vgd;*.VGD)|*.vgd;*.VGD",
+                           style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST | wx.FD_MULTIPLE) as fileDialog:
             if fileDialog.ShowModal() == wx.ID_CANCEL:
                 return
             file_paths = fileDialog.GetPaths()
@@ -479,7 +520,25 @@ def import_multiple_vgd_files(window, file_paths=None, show_message=False):
     if not file_paths:
         return
 
+    # Create console window centered on parent
+    parent_pos = window.GetPosition()
+    parent_size = window.GetSize()
+    console_frame = wx.Frame(window, title="Importing VGD Files", size=(400, 350))
+    console_frame.SetPosition((
+        parent_pos.x + (parent_size.width - 400) // 2,
+        parent_pos.y + (parent_size.height - 350) // 2
+    ))
+    console_text = wx.TextCtrl(console_frame, style=wx.TE_MULTILINE | wx.TE_READONLY)
+    console_frame.Show()
+
+    def update_console(message):
+        console_text.AppendText(message + '\n')
+        console_text.Update()
+        wx.SafeYield()
+
     try:
+        update_console(f"Importing {len(file_paths)} VGD file(s)...")
+
         # Use first file's directory and create combined filename
         output_dir = os.path.dirname(file_paths[0])
         first_base = os.path.splitext(os.path.basename(file_paths[0]))[0]
@@ -496,10 +555,13 @@ def import_multiple_vgd_files(window, file_paths=None, show_message=False):
         sheet_names = []
         first_sample_name = None
 
-        for file_path in file_paths:
+        for file_idx, file_path in enumerate(file_paths):
             try:
+                update_console(f"\nOpening ({file_idx + 1}/{len(file_paths)}): {os.path.basename(file_path)}")
                 parsed_data = parse_vgd_file(file_path)
-                calc_data = calculate_vgd_data(parsed_data)
+
+                num_spectra = parsed_data.get('num_spectra', 1)
+                update_console(f"  Spectra in file: {num_spectra}")
 
                 base_name = os.path.splitext(os.path.basename(file_path))[0]
                 core_level = extract_core_level_name(os.path.basename(file_path))
@@ -511,86 +573,103 @@ def import_multiple_vgd_files(window, file_paths=None, show_message=False):
                 if first_sample_name is None:
                     first_sample_name = meta['subject'] if meta['subject'] else base_name
 
-                # Create unique sheet name
-                sheet_name = f"{core_level}0"
-                counter = 0
-                while sheet_name in sheet_names:
-                    counter += 1
-                    sheet_name = f"{core_level}{counter}"
-                sheet_names.append(sheet_name)
+                # Process each spectrum in the file
+                for spectrum_idx in range(num_spectra):
+                    calc_data = calculate_vgd_data(parsed_data, spectrum_idx)
 
-                ws = wb.create_sheet(sheet_name)
+                    # Create unique sheet name (first has no number, rest have 1, 2, 3...)
+                    if f"{core_level}" not in sheet_names:
+                        sheet_name = f"{core_level}"
+                    else:
+                        counter = 1
+                        sheet_name = f"{core_level}{counter}"
+                        while sheet_name in sheet_names:
+                            counter += 1
+                            sheet_name = f"{core_level}{counter}"
+                    sheet_names.append(sheet_name)
 
-                # Write headers
-                ws.cell(row=1, column=1, value='B.E.')
-                ws.cell(row=1, column=2, value='Corrected Data')
-                ws.cell(row=1, column=3, value='Raw Data')
-                ws.cell(row=1, column=4, value='Transmission')
+                    update_console(f"  Processing: {sheet_name}")
 
-                # Write data
-                for i, (be, corr, raw, trans) in enumerate(zip(
-                        calc_data['be_values'],
-                        calc_data['corrected_data'],
-                        calc_data['intensities'],
-                        calc_data['transmission_values']), start=2):
-                    ws.cell(row=i, column=1, value=round(be, 2))
-                    ws.cell(row=i, column=2, value=round(corr, 2))
-                    ws.cell(row=i, column=3, value=round(raw, 2))
-                    ws.cell(row=i, column=4, value=round(trans, 2))
+                    ws = wb.create_sheet(sheet_name)
 
-                # Add experimental info
-                exp_col = 50
-                ws.cell(row=1, column=exp_col, value="Experimental Description")
+                    # Write headers
+                    ws.cell(row=1, column=1, value='BE')
+                    ws.cell(row=1, column=2, value='Corrected Data')
+                    ws.cell(row=1, column=3, value='Raw Data')
+                    ws.cell(row=1, column=4, value='Transmission')
 
-                exp_metadata = {
-                    'Sample ID': meta['subject'] if meta['subject'] else base_name,
-                    'Title': meta['title'],
-                    'Author': meta['author'],
-                    'Date Created': meta['create_time'].split()[0] if meta['create_time'] else '',
-                    'Time Created': meta['create_time'].split()[1] if meta['create_time'] and len(meta['create_time'].split()) > 1 else '',
-                    'Date Saved': meta['saved_time'].split()[0] if meta['saved_time'] else '',
-                    'Time Saved': meta['saved_time'].split()[1] if meta['saved_time'] and len(meta['saved_time'].split()) > 1 else '',
-                    'Technique': 'XPS',
-                    'Species & Transition': core_level,
-                    'Source Label': source_label,
-                    'Source Energy': f"{source_energy:.2f}",
-                    'Pass Energy': f"{parsed_data['pass_energy']:.2f}" if parsed_data['pass_energy'] else 'Unknown',
-                    'Work Function': f"{parsed_data['work_fn']:.2f}" if parsed_data['work_fn'] else 'Unknown',
-                    'Dwell Time': f"{parsed_data['dwell_time']:.4f}" if parsed_data['dwell_time'] else 'Unknown',
-                    'Periods': str(parsed_data['periods']) if parsed_data['periods'] else 'Unknown',
-                    'Number of Points': str(parsed_data['num_points']),
-                    'BE Start': f"{calc_data['be_start']:.2f}",
-                    'BE End': f"{calc_data['be_end']:.2f}",
-                    'BE Step': f"{abs(calc_data['be_step']):.4f}",
-                    'KE Start': f"{parsed_data['ke_start']:.2f}" if parsed_data['ke_start'] else 'Unknown',
-                    'KE Step': f"{parsed_data['ke_step']:.4f}" if parsed_data['ke_step'] else 'Unknown',
-                    'TXF Applied': 'Yes' if calc_data['txf_valid'] else 'No',
-                    'TXF Coefficients': ', '.join([f"{c:.6f}" for c in parsed_data['txf_coeffs']]) if parsed_data['txf_coeffs'] else 'N/A',
-                }
+                    # Write data
+                    for i, (be, corr, raw, trans) in enumerate(zip(
+                            calc_data['be_values'],
+                            calc_data['corrected_data'],
+                            calc_data['intensities'],
+                            calc_data['transmission_values']), start=2):
+                        ws.cell(row=i, column=1, value=round(be, 2))
+                        ws.cell(row=i, column=2, value=round(corr, 2))
+                        ws.cell(row=i, column=3, value=round(raw, 2))
+                        ws.cell(row=i, column=4, value=round(trans, 2))
 
-                row = 2
-                for key, value in exp_metadata.items():
-                    ws.cell(row=row, column=exp_col, value=key)
-                    ws.cell(row=row, column=exp_col + 1, value=str(value))
-                    row += 1
+                    # Add experimental info
+                    exp_col = 50
+                    ws.cell(row=1, column=exp_col, value="Experimental Description")
 
-                ws.column_dimensions[openpyxl.utils.get_column_letter(exp_col)].width = 25
-                ws.column_dimensions[openpyxl.utils.get_column_letter(exp_col + 1)].width = 40
+                    exp_metadata = {
+                        'Sample ID': meta['subject'] if meta['subject'] else base_name,
+                        'Title': meta['title'],
+                        'Author': meta['author'],
+                        'Date Created': meta['create_time'].split()[0] if meta['create_time'] else '',
+                        'Time Created': meta['create_time'].split()[1] if meta['create_time'] and len(meta['create_time'].split()) > 1 else '',
+                        'Date Saved': meta['saved_time'].split()[0] if meta['saved_time'] else '',
+                        'Time Saved': meta['saved_time'].split()[1] if meta['saved_time'] and len(meta['saved_time'].split()) > 1 else '',
+                        'Technique': 'XPS',
+                        'Species & Transition': core_level,
+                        'Spectrum Index': str(spectrum_idx),
+                        'Total Spectra': str(num_spectra),
+                        'Source Label': source_label,
+                        'Source Energy': f"{source_energy:.2f}",
+                        'Pass Energy': f"{parsed_data['pass_energy']:.2f}" if parsed_data['pass_energy'] else 'Unknown',
+                        'Work Function': f"{parsed_data['work_fn']:.2f}" if parsed_data['work_fn'] else 'Unknown',
+                        'Dwell Time': f"{parsed_data['dwell_time']:.4f}" if parsed_data['dwell_time'] else 'Unknown',
+                        'Periods': str(parsed_data['periods']) if parsed_data['periods'] else 'Unknown',
+                        'Number of Points': str(parsed_data['num_points']),
+                        'BE Start': f"{calc_data['be_start']:.2f}",
+                        'BE End': f"{calc_data['be_end']:.2f}",
+                        'BE Step': f"{abs(calc_data['be_step']):.4f}",
+                        'KE Start': f"{parsed_data['ke_start']:.2f}" if parsed_data['ke_start'] else 'Unknown',
+                        'KE Step': f"{parsed_data['ke_step']:.4f}" if parsed_data['ke_step'] else 'Unknown',
+                        'TXF Applied': 'Yes' if calc_data['txf_valid'] else 'No',
+                        'TXF Coefficients': ', '.join([f"{c:.6f}" for c in parsed_data['txf_coeffs']]) if parsed_data['txf_coeffs'] else 'N/A',
+                    }
+
+                    row = 2
+                    for key, value in exp_metadata.items():
+                        ws.cell(row=row, column=exp_col, value=key)
+                        ws.cell(row=row, column=exp_col + 1, value=str(value))
+                        row += 1
+
+                    ws.column_dimensions[openpyxl.utils.get_column_letter(exp_col)].width = 25
+                    ws.column_dimensions[openpyxl.utils.get_column_letter(exp_col + 1)].width = 40
 
             except Exception as e:
-                print(f"Error processing {file_path}: {e}")
+                update_console(f"  Error: {e}")
                 continue
 
         if not sheet_names:
+            update_console("No VGD files could be processed")
+            wx.CallLater(2000, console_frame.Close)
             wx.MessageBox("No VGD files could be processed", "Error", wx.OK | wx.ICON_ERROR)
             return
 
+        update_console(f"\nSaving: {os.path.basename(excel_path)}")
         wb.save(excel_path)
+        update_console(f"  Created {len(sheet_names)} sheet(s)")
 
         # Import into KherveFitting
         from libraries.ConfigFile import Init_Measurement_Data, add_core_level_Data
         from libraries.FileMenu.Save import update_undo_redo_state, save_state, convert_to_serializable_and_round
         from libraries.Sheet_Operations import on_sheet_selected
+
+        update_console(f"\nImporting to KherveFitting...")
 
         window.Data = Init_Measurement_Data(window)
         window.Data['FilePath'] = excel_path
@@ -604,11 +683,13 @@ def import_multiple_vgd_files(window, file_paths=None, show_message=False):
             window.results_grid.DeleteRows(0, window.results_grid.GetNumberRows())
 
         # Add all core levels
-        for sheet_name in sheet_names:
+        for idx, sheet_name in enumerate(sheet_names):
             add_core_level_Data(window.Data, window, excel_path, sheet_name)
+            update_console(f"  Imported: {sheet_name}")
 
         window.Data['SampleNames'] = {0: first_sample_name}
 
+        update_console(f"Creating JSON file...")
         json_path = excel_path.replace('.xlsx', '.json')
         serializable_data = convert_to_serializable_and_round(window.Data)
         with open(json_path, 'w') as f:
@@ -624,10 +705,15 @@ def import_multiple_vgd_files(window, file_paths=None, show_message=False):
         on_sheet_selected(window, None)
         save_state(window)
 
-        if show_message:
-            wx.MessageBox(f"Imported {len(sheet_names)} VGD files", "Import Successful", wx.OK | wx.ICON_INFORMATION)
+        update_console(f"\nImport complete!")
+        update_console(f"  {len(sheet_names)} core level(s) imported")
+
+        # Close console after delay
+        wx.CallLater(1500, console_frame.Close)
 
     except Exception as e:
         import traceback
         traceback.print_exc()
+        update_console(f"\nError: {str(e)}")
+        wx.CallLater(3000, console_frame.Close)
         wx.MessageBox(f"Error importing VGD files:\n\n{str(e)}", "Error", wx.OK | wx.ICON_ERROR)

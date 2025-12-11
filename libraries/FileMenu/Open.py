@@ -4186,7 +4186,7 @@ def open_xlsx_file(window, file_path=None):
             col1_value = str(df.iloc[0, 0]).strip().upper()
             col2_value = str(df.iloc[0, 1]).strip().upper()
 
-            xps_valid = ('BE' in col1_value or 'BINDING' in col1_value) and \
+            xps_valid = ('BE' in col1_value or 'B.E.' in col1_value or 'BINDING' in col1_value) and \
                         ('RAW DATA' in col2_value or 'CORRECTED DATA' in col2_value or 'INTENSITY' in col2_value)
             raman_valid = ('WAVENUMBER' in col1_value or 'CM-1' in col1_value) and \
                           ('RAW DATA' in col2_value or 'INTENSITY' in col2_value)
