@@ -62,10 +62,12 @@ def extract_core_level_name(filename):
 def parse_vgd_file(file_path):
     """
     Parse a VGD file and return extracted data.
+    Handles both single-spectrum and multi-spectrum VGD files.
 
     Returns:
         dict with keys: intensities, ke_start, ke_step, num_points, source_energy,
-                       txf_coeffs, pass_energy, work_fn, dwell_time, metadata
+                       txf_coeffs, pass_energy, work_fn, dwell_time, periods, metadata,
+                       num_spectra, points_per_spectrum
     """
     if olefile is None:
         raise ImportError("olefile library is required")
@@ -82,12 +84,40 @@ def parse_vgd_file(file_path):
 
     # Read intensity data from VGData stream
     vgdata = ole.openstream('VGData').read()
-    num_points = len(vgdata) // 8
+    total_points = len(vgdata) // 8
 
-    intensities = []
-    for i in range(num_points):
-        val = struct.unpack('<d', vgdata[i*8:i*8+8])[0]
-        intensities.append(val)
+    # Check VGDataAxes for multi-spectrum info
+    # Format: offset 12 = num_points - 1, offset 28 = num_spectra - 1
+    data_axes = ole.openstream('VGDataAxes').read()
+
+    num_spectra = 1
+    points_per_spectrum = total_points
+
+    if len(data_axes) >= 32:
+        dim1 = struct.unpack('<i', data_axes[12:16])[0] + 1  # Points per spectrum
+        dim2 = struct.unpack('<i', data_axes[28:32])[0] + 1  # Number of spectra
+
+        # Validate dimensions
+        if dim1 * dim2 == total_points and dim2 > 1:
+            num_spectra = dim2
+            points_per_spectrum = dim1
+
+    # Parse all intensities
+    all_intensities = []
+    for i in range(total_points):
+        val = struct.unpack('<d', vgdata[i * 8:i * 8 + 8])[0]
+        all_intensities.append(val)
+
+    # Reshape into list of spectra if multi-spectrum
+    if num_spectra > 1:
+        intensities_2d = []
+        for s in range(num_spectra):
+            start_idx = s * points_per_spectrum
+            end_idx = start_idx + points_per_spectrum
+            intensities_2d.append(all_intensities[start_idx:end_idx])
+        intensities = intensities_2d  # List of lists
+    else:
+        intensities = all_intensities  # Single list
 
     # Extract KE range from VGSpaceAxes
     space_axes = ole.openstream('VGSpaceAxes').read()
@@ -100,8 +130,8 @@ def parse_vgd_file(file_path):
 
     # Extract X-ray source energy
     source_energy = None
-    for i in range(0, len(prop_data)-4, 4):
-        val = struct.unpack('<f', prop_data[i:i+4])[0]
+    for i in range(0, len(prop_data) - 4, 4):
+        val = struct.unpack('<f', prop_data[i:i + 4])[0]
         if 1480 < val < 1490:
             source_energy = val
             break
@@ -120,55 +150,45 @@ def parse_vgd_file(file_path):
 
     # Dwell Time is at PE offset + 8
     dwell_time = None
-    if pe_offset and pe_offset + 12 <= len(prop_data):
+    if pe_offset is not None and pe_offset + 12 <= len(prop_data):
         dwell_time = struct.unpack('<f', prop_data[pe_offset + 8:pe_offset + 12])[0]
         if not (0.001 < dwell_time < 10.0):  # Sanity check
             dwell_time = None
 
     # Periods is at PE offset - 32
     periods = None
-    if pe_offset and pe_offset >= 32:
+    if pe_offset is not None and pe_offset >= 32:
         periods = struct.unpack('<i', prop_data[pe_offset - 32:pe_offset - 28])[0]
         if not (1 <= periods <= 1000):  # Sanity check
             periods = None
 
-    # Extract Work Function
+    # Work Function is at PE offset + 16
     work_fn = None
-    for i in range(0, len(prop_data)-4, 4):
-        val = struct.unpack('<f', prop_data[i:i+4])[0]
-        if 4.0 < val < 5.0:
-            work_fn = val
-            break
+    if pe_offset is not None and pe_offset + 20 <= len(prop_data):
+        work_fn = struct.unpack('<f', prop_data[pe_offset + 16:pe_offset + 20])[0]
+        if not (3.0 < work_fn < 6.0):  # Sanity check
+            work_fn = None
 
-    # # Extract Dwell Time
-    # dwell_time = None
-    # for i in range(0, len(prop_data)-8, 4):
-    #     if i+8 <= len(prop_data):
-    #         val = struct.unpack('<d', prop_data[i:i+8])[0]
-    #         if 0.01 < val < 1.0:
-    #             dwell_time = val
-    #             break
-
-        # Extract Transmission Function coefficients
-        # TXF coefficients are stored with 8-byte spacing (float + 4-byte padding)
-        # First coefficient 'a' is typically 4.0-4.5
-        txf_coeffs = []
-        for start in range(3100, min(3300, len(prop_data) - 32), 4):
-            val = struct.unpack('<f', prop_data[start:start + 4])[0]
-            if 4.0 < val < 4.5:
-                vals = []
-                valid = True
-                for j in range(4):
-                    off = start + j * 8
-                    if off + 4 <= len(prop_data):
-                        v = struct.unpack('<f', prop_data[off:off + 4])[0]
-                        vals.append(v)
-                    else:
-                        valid = False
-                        break
-                if valid and len(vals) == 4 and 0.5 < vals[1] < 1.0:
-                    txf_coeffs = vals
+    # Extract Transmission Function coefficients
+    # TXF coefficients are stored with 8-byte spacing (float + 4-byte padding)
+    # First coefficient 'a' is typically 4.0-4.5
+    txf_coeffs = []
+    for start in range(3100, min(3800, len(prop_data) - 32), 4):
+        val = struct.unpack('<f', prop_data[start:start + 4])[0]
+        if 4.0 < val < 4.5:
+            vals = []
+            valid = True
+            for j in range(4):
+                off = start + j * 8
+                if off + 4 <= len(prop_data):
+                    v = struct.unpack('<f', prop_data[off:off + 4])[0]
+                    vals.append(v)
+                else:
+                    valid = False
                     break
+            if valid and len(vals) == 4 and 0.5 < vals[1] < 1.0:
+                txf_coeffs = vals
+                break
 
     ole.close()
 
@@ -176,7 +196,9 @@ def parse_vgd_file(file_path):
         'intensities': intensities,
         'ke_start': ke_start,
         'ke_step': ke_step,
-        'num_points': num_points,
+        'num_points': points_per_spectrum,
+        'total_points': total_points,
+        'num_spectra': num_spectra,
         'source_energy': source_energy,
         'txf_coeffs': txf_coeffs,
         'pass_energy': pass_energy,
@@ -193,15 +215,26 @@ def parse_vgd_file(file_path):
     }
 
 
-def calculate_vgd_data(parsed_data):
+def calculate_vgd_data(parsed_data, spectrum_index=0):
     """
     Calculate BE values, transmission, and corrected data from parsed VGD data.
+
+    Args:
+        parsed_data: Output from parse_vgd_file
+        spectrum_index: For multi-spectrum files, which spectrum to process (0-indexed)
 
     Returns:
         dict with keys: be_values, ke_values, transmission_values, corrected_data,
                        be_start, be_end, be_step
     """
-    intensities = parsed_data['intensities']
+    num_spectra = parsed_data.get('num_spectra', 1)
+
+    # Get intensities for the specified spectrum
+    if num_spectra > 1:
+        intensities = parsed_data['intensities'][spectrum_index]
+    else:
+        intensities = parsed_data['intensities']
+
     ke_start = parsed_data['ke_start']
     ke_step = parsed_data['ke_step']
     num_points = parsed_data['num_points']
@@ -229,15 +262,16 @@ def calculate_vgd_data(parsed_data):
         transmission_values = [correction_factor] * num_points
     else:
         # No correction available
-        corrected_data = intensities.copy()
+        corrected_data = list(intensities)
         transmission_values = [1.0] * num_points
+        txf_valid = False
 
     return {
         'be_values': be_values,
         'ke_values': ke_values,
         'transmission_values': transmission_values,
         'corrected_data': corrected_data,
-        'intensities': intensities,
+        'intensities': list(intensities),
         'be_start': be_start,
         'be_end': be_end,
         'be_step': be_step,
@@ -247,7 +281,7 @@ def calculate_vgd_data(parsed_data):
 
 def import_vgd_file(window, file_path=None, show_message=False):
     """
-    Import Thermo VGD binary file (single core level).
+    Import Thermo VGD binary file (single or multi-spectrum).
 
     Args:
         window: Main KherveFitting window instance
@@ -265,8 +299,8 @@ def import_vgd_file(window, file_path=None, show_message=False):
 
     if file_path is None:
         with wx.FileDialog(window, "Open VGD file",
-                          wildcard="VGD files (*.vgd;*.VGD)|*.vgd;*.VGD",
-                          style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as fileDialog:
+                           wildcard="VGD files (*.vgd;*.VGD)|*.vgd;*.VGD",
+                           style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as fileDialog:
             if fileDialog.ShowModal() == wx.ID_CANCEL:
                 return
             file_path = fileDialog.GetPath()
@@ -274,7 +308,8 @@ def import_vgd_file(window, file_path=None, show_message=False):
     try:
         # Parse VGD file
         parsed_data = parse_vgd_file(file_path)
-        calc_data = calculate_vgd_data(parsed_data)
+
+        num_spectra = parsed_data.get('num_spectra', 1)
 
         # Extract core level name from filename
         base_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -292,65 +327,75 @@ def import_vgd_file(window, file_path=None, show_message=False):
         wb = openpyxl.Workbook()
         wb.remove(wb.active)
 
-        # Create data sheet
-        sheet_name = f"{core_level}0"
-        ws = wb.create_sheet(sheet_name)
+        sheet_names = []
 
-        # Write headers
-        ws.cell(row=1, column=1, value='B.E.')
-        ws.cell(row=1, column=2, value='Corrected Data')
-        ws.cell(row=1, column=3, value='Raw Data')
-        ws.cell(row=1, column=4, value='Transmission')
+        # Process each spectrum
+        for spectrum_idx in range(num_spectra):
+            calc_data = calculate_vgd_data(parsed_data, spectrum_idx)
 
-        # Write data
-        for i, (be, corr, raw, trans) in enumerate(zip(
-                calc_data['be_values'],
-                calc_data['corrected_data'],
-                calc_data['intensities'],
-                calc_data['transmission_values']), start=2):
-            ws.cell(row=i, column=1, value=round(be, 2))
-            ws.cell(row=i, column=2, value=round(corr, 2))
-            ws.cell(row=i, column=3, value=round(raw, 2))
-            ws.cell(row=i, column=4, value=round(trans, 2))
+            # Create sheet name: Pt4f0, Pt4f1, Pt4f2, etc.
+            sheet_name = f"{core_level}{spectrum_idx}"
+            sheet_names.append(sheet_name)
 
-        # Add experimental info in column 50 (AX)
-        exp_col = 50
-        ws.cell(row=1, column=exp_col, value="Experimental Description")
+            ws = wb.create_sheet(sheet_name)
 
-        exp_metadata = {
-            'Sample ID': meta['subject'] if meta['subject'] else base_name,
-            'Title': meta['title'],
-            'Author': meta['author'],
-            'Date Created': meta['create_time'].split()[0] if meta['create_time'] else '',
-            'Time Created': meta['create_time'].split()[1] if meta['create_time'] and len(meta['create_time'].split()) > 1 else '',
-            'Date Saved': meta['saved_time'].split()[0] if meta['saved_time'] else '',
-            'Time Saved': meta['saved_time'].split()[1] if meta['saved_time'] and len(meta['saved_time'].split()) > 1 else '',
-            'Technique': 'XPS',
-            'Species & Transition': core_level,
-            'Source Label': source_label,
-            'Source Energy': f"{source_energy:.2f}",
-            'Pass Energy': f"{parsed_data['pass_energy']:.2f}" if parsed_data['pass_energy'] else 'Unknown',
-            'Work Function': f"{parsed_data['work_fn']:.2f}" if parsed_data['work_fn'] else 'Unknown',
-            'Dwell Time': f"{parsed_data['dwell_time']:.4f}" if parsed_data['dwell_time'] else 'Unknown',
-            'Periods': str(parsed_data['periods']) if parsed_data['periods'] else 'Unknown',
-            'Number of Points': str(parsed_data['num_points']),
-            'BE Start': f"{calc_data['be_start']:.2f}",
-            'BE End': f"{calc_data['be_end']:.2f}",
-            'BE Step': f"{abs(calc_data['be_step']):.4f}",
-            'KE Start': f"{parsed_data['ke_start']:.2f}" if parsed_data['ke_start'] else 'Unknown',
-            'KE Step': f"{parsed_data['ke_step']:.4f}" if parsed_data['ke_step'] else 'Unknown',
-            'TXF Applied': 'Yes' if calc_data['txf_valid'] else 'No',
-            'TXF Coefficients': ', '.join([f"{c:.6f}" for c in parsed_data['txf_coeffs']]) if parsed_data['txf_coeffs'] else 'N/A',
-        }
+            # Write headers
+            ws.cell(row=1, column=1, value='B.E.')
+            ws.cell(row=1, column=2, value='Corrected Data')
+            ws.cell(row=1, column=3, value='Raw Data')
+            ws.cell(row=1, column=4, value='Transmission')
 
-        row = 2
-        for key, value in exp_metadata.items():
-            ws.cell(row=row, column=exp_col, value=key)
-            ws.cell(row=row, column=exp_col + 1, value=str(value))
-            row += 1
+            # Write data
+            for i, (be, corr, raw, trans) in enumerate(zip(
+                    calc_data['be_values'],
+                    calc_data['corrected_data'],
+                    calc_data['intensities'],
+                    calc_data['transmission_values']), start=2):
+                ws.cell(row=i, column=1, value=round(be, 2))
+                ws.cell(row=i, column=2, value=round(corr, 2))
+                ws.cell(row=i, column=3, value=round(raw, 2))
+                ws.cell(row=i, column=4, value=round(trans, 2))
 
-        ws.column_dimensions[openpyxl.utils.get_column_letter(exp_col)].width = 25
-        ws.column_dimensions[openpyxl.utils.get_column_letter(exp_col + 1)].width = 40
+            # Add experimental info in column 50 (AX)
+            exp_col = 50
+            ws.cell(row=1, column=exp_col, value="Experimental Description")
+
+            exp_metadata = {
+                'Sample ID': meta['subject'] if meta['subject'] else base_name,
+                'Title': meta['title'],
+                'Author': meta['author'],
+                'Date Created': meta['create_time'].split()[0] if meta['create_time'] else '',
+                'Time Created': meta['create_time'].split()[1] if meta['create_time'] and len(meta['create_time'].split()) > 1 else '',
+                'Date Saved': meta['saved_time'].split()[0] if meta['saved_time'] else '',
+                'Time Saved': meta['saved_time'].split()[1] if meta['saved_time'] and len(meta['saved_time'].split()) > 1 else '',
+                'Technique': 'XPS',
+                'Species & Transition': core_level,
+                'Spectrum Index': str(spectrum_idx),
+                'Total Spectra': str(num_spectra),
+                'Source Label': source_label,
+                'Source Energy': f"{source_energy:.2f}",
+                'Pass Energy': f"{parsed_data['pass_energy']:.2f}" if parsed_data['pass_energy'] else 'Unknown',
+                'Work Function': f"{parsed_data['work_fn']:.2f}" if parsed_data['work_fn'] else 'Unknown',
+                'Dwell Time': f"{parsed_data['dwell_time']:.4f}" if parsed_data['dwell_time'] else 'Unknown',
+                'Periods': str(parsed_data['periods']) if parsed_data['periods'] else 'Unknown',
+                'Number of Points': str(parsed_data['num_points']),
+                'BE Start': f"{calc_data['be_start']:.2f}",
+                'BE End': f"{calc_data['be_end']:.2f}",
+                'BE Step': f"{abs(calc_data['be_step']):.4f}",
+                'KE Start': f"{parsed_data['ke_start']:.2f}" if parsed_data['ke_start'] else 'Unknown',
+                'KE Step': f"{parsed_data['ke_step']:.4f}" if parsed_data['ke_step'] else 'Unknown',
+                'TXF Applied': 'Yes' if calc_data['txf_valid'] else 'No',
+                'TXF Coefficients': ', '.join([f"{c:.6f}" for c in parsed_data['txf_coeffs']]) if parsed_data['txf_coeffs'] else 'N/A',
+            }
+
+            row = 2
+            for key, value in exp_metadata.items():
+                ws.cell(row=row, column=exp_col, value=key)
+                ws.cell(row=row, column=exp_col + 1, value=str(value))
+                row += 1
+
+            ws.column_dimensions[openpyxl.utils.get_column_letter(exp_col)].width = 25
+            ws.column_dimensions[openpyxl.utils.get_column_letter(exp_col + 1)].width = 40
 
         wb.save(excel_path)
 
@@ -370,7 +415,9 @@ def import_vgd_file(window, file_path=None, show_message=False):
         if window.results_grid.GetNumberRows() > 0:
             window.results_grid.DeleteRows(0, window.results_grid.GetNumberRows())
 
-        add_core_level_Data(window.Data, window, excel_path, sheet_name)
+        # Add all core levels/spectra
+        for sheet_name in sheet_names:
+            add_core_level_Data(window.Data, window, excel_path, sheet_name)
 
         sample_name = meta['subject'] if meta['subject'] else base_name
         window.Data['SampleNames'] = {0: sample_name}
@@ -381,15 +428,21 @@ def import_vgd_file(window, file_path=None, show_message=False):
             json.dump(serializable_data, f, indent=4)
 
         window.sheet_combobox.Clear()
-        window.sheet_combobox.Append(sheet_name)
+        for sheet_name in sheet_names:
+            window.sheet_combobox.Append(sheet_name)
         window.sheet_combobox.SetSelection(0)
-        window.current_sheet = sheet_name
+        window.current_sheet = sheet_names[0]
 
         on_sheet_selected(window, None)
         save_state(window)
 
         if show_message:
-            wx.MessageBox(f"VGD file imported: {core_level}", "Import Successful", wx.OK | wx.ICON_INFORMATION)
+            if num_spectra > 1:
+                wx.MessageBox(f"VGD file imported: {core_level} ({num_spectra} spectra)",
+                              "Import Successful", wx.OK | wx.ICON_INFORMATION)
+            else:
+                wx.MessageBox(f"VGD file imported: {core_level}",
+                              "Import Successful", wx.OK | wx.ICON_INFORMATION)
 
     except Exception as e:
         import traceback
