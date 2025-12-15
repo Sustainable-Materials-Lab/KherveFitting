@@ -12,7 +12,25 @@ from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
 from matplotlib.backends.backend_wx import NavigationToolbar2Wx as NavigationToolbar
 from matplotlib.widgets import RectangleSelector, SpanSelector
 import matplotlib.patches as patches
-import hyperspy.api as hs
+
+
+# EDX Utilities - standalone replacements for HyperSpy/ExSpy
+try:
+    from libraries.EDX_Utilities import (
+        elements as edx_elements,
+        get_xray_lines_near_energy,
+        get_element_xray_lines,
+        find_peaks1D_ohaver,
+        Signal1D,
+        get_kfactor,
+        DEFAULT_KFACTORS
+    )
+    from libraries.BCF_Reader import load_bcf, BCFData, BCFSpectrum, BCFMap
+    EDX_UTILITIES_AVAILABLE = True
+except ImportError:
+    EDX_UTILITIES_AVAILABLE = False
+    edx_elements = None
+
 
 
 class EDXSEMWindow(wx.Frame):
@@ -35,6 +53,9 @@ class EDXSEMWindow(wx.Frame):
         self.selected_points = []
         self.selected_areas = []
         self.selected_lines = []
+
+        self.include_elements = set()   # elements to include (green)
+        self.exclude_elements = set()   # elements to exclude (red)
         self.selected_elements = []
 
         self.point_size = 1  # Size in pixels (1 = single pixel)
@@ -1334,6 +1355,7 @@ class EDXSEMWindow(wx.Frame):
             # Single pixel
             spectrum = data[y, x, :]
             title = f'EDX Spectrum at Point ({x}, {y})'
+            title = ' '
         else:
             # Average over area
             half_size = point_size // 2
@@ -1344,6 +1366,7 @@ class EDXSEMWindow(wx.Frame):
 
             spectrum = np.mean(data[y1:y2, x1:x2, :], axis=(0, 1))
             title = f'EDX Spectrum at Point ({x}, {y}) [{point_size}×{point_size} px]'
+            title = ' '
 
         energy = self.get_energy_axis()
 
@@ -1578,6 +1601,7 @@ class EDXSEMWindow(wx.Frame):
             energy = np.arange(len(spectrum))
 
         title = f'Summed EDX Spectrum - Area: {(x2 - x1 + 1) * (y2 - y1 + 1)} pixels'
+        title = ' '
         grid_label = f"Area ({x2 - x1 + 1}×{y2 - y1 + 1})"
 
         # Plot using common EDX plotting method
@@ -2382,7 +2406,7 @@ class EDXSEMWindow(wx.Frame):
 
         self.load_file(file_path, 'bcf')
 
-    def load_file(self, file_path, data_type):
+    def load_file_OLD(self, file_path, data_type):
         """Generic file loader with automatic reader selection"""
         try:
             loaded_data = None
@@ -2448,6 +2472,234 @@ class EDXSEMWindow(wx.Frame):
                          "Error", wx.OK | wx.ICON_ERROR)
             import traceback
             traceback.print_exc()
+
+    def load_file(self, file_path, data_type):
+        """Generic file loader - uses standalone readers"""
+        try:
+            loaded_data = None
+            ext = os.path.splitext(file_path)[1].lower()
+
+            # Try standalone readers first
+            if ext == '.bcf':
+                try:
+                    from libraries.BCF_Reader import load_bcf
+                    bcf_data = load_bcf(file_path)
+                    if bcf_data.maps:
+                        loaded_data = self._convert_bcf_to_signal(bcf_data.maps[0])
+                    elif bcf_data.spectra:
+                        loaded_data = self._convert_bcf_to_signal(bcf_data.spectra[0])
+                    print("Successfully loaded with BCF_Reader")
+                except Exception as e:
+                    print(f"BCF_Reader failed: {e}")
+                    loaded_data = None
+
+            elif ext in ['.emsa', '.msa']:
+                try:
+                    from libraries.EDX_Utilities import load_emsa
+                    emsa_data = load_emsa(file_path)
+                    loaded_data = self._convert_dict_to_signal(emsa_data)
+                    print("Successfully loaded with EDX_Utilities")
+                except Exception as e:
+                    print(f"EMSA reader failed: {e}")
+                    loaded_data = None
+
+            elif ext in ['.hdf5', '.h5']:
+                try:
+                    loaded_data = self._load_hdf5_edx(file_path)
+                    print("Successfully loaded HDF5 file")
+                except Exception as e:
+                    print(f"HDF5 reader failed: {e}")
+                    loaded_data = None
+
+            if loaded_data is None:
+                wx.MessageBox(f"Could not load file. Supported formats: BCF, EMSA/MSA, HDF5",
+                              "Load Error", wx.OK | wx.ICON_ERROR)
+                return
+
+            # Handle list of signals
+            if isinstance(loaded_data, list):
+                if len(loaded_data) == 1:
+                    loaded_data = loaded_data[0]
+                else:
+                    self.add_multiple_signals_to_tree(loaded_data, file_path, data_type)
+                    return
+
+            # Store signal
+            self.loaded_signals.append({
+                'data': loaded_data,
+                'filename': os.path.basename(file_path),
+                'path': file_path,
+                'type': data_type
+            })
+
+            self.current_data = loaded_data
+
+            if hasattr(self, 'data_browser_window') and self.data_browser_window is not None:
+                self.data_browser_window.refresh_tree()
+
+            self.plot_current_map()
+            self.update_info_text(loaded_data)
+            self.extract_elements(loaded_data)
+            self.load_element_preferences_from_data()
+
+        except Exception as e:
+            wx.MessageBox(f"Error loading file:\n{str(e)}", "Error", wx.OK | wx.ICON_ERROR)
+            import traceback
+            traceback.print_exc()
+
+    def _load_hdf5_edx(self, file_path):
+        """Load EDX data from HDF5 file directly"""
+        import h5py
+        from libraries.EDX_Utilities import Signal1D
+
+        with h5py.File(file_path, 'r') as f:
+            # Common HDF5 structures for EDX data
+            data_paths = [
+                'EDX/data', 'edx/data', 'Data/data',
+                'Experiments/EDX/data', 'entry/data/data',
+                'spectrum', 'data', 'counts'
+            ]
+
+            energy_paths = [
+                'EDX/energy', 'edx/energy', 'Data/energy',
+                'Experiments/EDX/energy', 'entry/data/energy',
+                'energy', 'axis', 'x'
+            ]
+
+            data = None
+            energy_axis = None
+
+            # Find data
+            for path in data_paths:
+                if path in f:
+                    data = np.array(f[path])
+                    print(f"Found data at: {path}")
+                    break
+
+            # If not found, search for largest dataset
+            if data is None:
+                def find_largest_dataset(group):
+                    largest = None
+                    largest_size = 0
+                    for key in group.keys():
+                        item = group[key]
+                        if isinstance(item, h5py.Dataset):
+                            if item.size > largest_size and item.ndim >= 1:
+                                largest = np.array(item)
+                                largest_size = item.size
+                        elif isinstance(item, h5py.Group):
+                            sub_largest = find_largest_dataset(item)
+                            if sub_largest is not None and sub_largest.size > largest_size:
+                                largest = sub_largest
+                                largest_size = sub_largest.size
+                    return largest
+
+                data = find_largest_dataset(f)
+
+            if data is None:
+                raise ValueError("No data found in HDF5 file")
+
+            # Find energy axis
+            for path in energy_paths:
+                if path in f:
+                    energy_axis = np.array(f[path])
+                    print(f"Found energy at: {path}")
+                    break
+
+            # Generate energy axis if not found
+            if energy_axis is None:
+                if data.ndim == 3:
+                    n_channels = data.shape[2]
+                else:
+                    n_channels = data.shape[-1]
+                # Default 10 eV per channel (0.01 keV), typical for EDX with ~4000 channels
+                # This gives 0-20 keV range for 4000 channels
+                energy_axis = np.arange(n_channels) * 0.01
+                print(f"Generated default energy axis: 0 - {(n_channels - 1) * 0.01:.2f} keV ({n_channels} channels)")
+
+            # Check if energy axis needs scaling to keV
+            max_energy = np.max(energy_axis)
+            if max_energy > 1000:
+                energy_axis = energy_axis / 1000.0
+                print(f"Divided by 1000 (eV to keV)")
+            elif max_energy > 100:
+                energy_axis = energy_axis / 10.0
+                print(f"Divided by 10")
+
+            print(f"Final energy range: {energy_axis.min():.2f} - {energy_axis.max():.2f} keV")
+
+            # Create Signal1D object
+            signal = Signal1D(data)
+
+            # IMPORTANT: Set the energy axis scale and offset
+            # For 3D data, energy is the LAST axis (index -1 or signal_axes[0])
+            scale = energy_axis[1] - energy_axis[0] if len(energy_axis) > 1 else 0.01
+            offset = energy_axis[0]
+
+            # Get the index of the last axis (energy axis)
+            last_axis_idx = len(signal.axes_manager) - 1
+
+            signal.axes_manager[last_axis_idx].scale = scale
+            signal.axes_manager[last_axis_idx].offset = offset
+            signal.axes_manager[last_axis_idx].units = 'keV'
+            signal.axes_manager[last_axis_idx].name = 'Energy'
+
+            # Store energy axis in metadata for direct access
+            signal.metadata['energy_axis'] = energy_axis
+
+            print(f"Signal created with scale={scale:.6f}, offset={offset:.2f}, data shape={data.shape}")
+
+            return signal
+
+    def _convert_bcf_to_signal(self, bcf_obj):
+        """Convert BCF data to signal-like object"""
+        from libraries.EDX_Utilities import Signal1D
+
+        if hasattr(bcf_obj, 'energy') and bcf_obj.energy is not None:
+            signal = Signal1D(bcf_obj.data)
+
+            # Set up energy axis on the LAST axis
+            if len(bcf_obj.energy) > 1:
+                scale = bcf_obj.energy[1] - bcf_obj.energy[0]
+                offset = bcf_obj.energy[0]
+            else:
+                scale = 0.005
+                offset = 0
+
+            last_axis_idx = len(signal.axes_manager) - 1
+            signal.axes_manager[last_axis_idx].scale = scale
+            signal.axes_manager[last_axis_idx].offset = offset
+            signal.axes_manager[last_axis_idx].units = 'keV'
+            signal.axes_manager[last_axis_idx].name = 'Energy'
+
+            signal.metadata = bcf_obj.metadata
+            return signal
+        else:
+            return Signal1D(bcf_obj.data)
+
+    def _convert_dict_to_signal(self, data_dict):
+        """Convert dict with 'data' and 'energy' to signal-like object"""
+        from libraries.EDX_Utilities import Signal1D
+
+        signal = Signal1D(data_dict['data'])
+        energy = data_dict.get('energy')
+
+        if energy is not None and len(energy) > 1:
+            scale = energy[1] - energy[0]
+            offset = energy[0]
+        else:
+            scale = 0.005
+            offset = 0
+
+        # Set on LAST axis (energy axis)
+        last_axis_idx = len(signal.axes_manager) - 1
+        signal.axes_manager[last_axis_idx].scale = scale
+        signal.axes_manager[last_axis_idx].offset = offset
+        signal.axes_manager[last_axis_idx].units = 'keV'
+        signal.axes_manager[last_axis_idx].name = 'Energy'
+
+        signal.metadata = data_dict.get('metadata', {})
+        return signal
 
     def add_signal_to_tree(self, signal, file_path, data_type):
         """Add a signal to the data tree"""
@@ -2905,8 +3157,7 @@ class EDXSEMWindow(wx.Frame):
             energy = np.arange(len(spectrum))
 
         # Plot using common styled method
-        self._plot_edx_spectrum_styled(energy, spectrum, 'EDX Sum Spectrum', 'Sum Spectrum')
-
+        self._plot_edx_spectrum_styled(energy, spectrum, ' ', 'Sum Spectrum')
 
     def add_peak_labels(self, ax, energy, spectrum):
         """
@@ -2915,17 +3166,20 @@ class EDXSEMWindow(wx.Frame):
         Respects user element selections (green=include, red=exclude).
         """
         try:
-            import hyperspy.api as hs
-            from exspy.material import elements
-            from exspy.utils.eds import get_xray_lines_near_energy
+            from libraries.EDX_Utilities import (
+                elements, get_xray_lines_near_energy, Signal1D
+            )
+
+            # DEBUG: Print energy range
+            print(f"DEBUG add_peak_labels: energy range = {energy[0]:.4f} - {energy[-1]:.4f}, len={len(energy)}")
+            print(f"DEBUG add_peak_labels: scale would be = {energy[1] - energy[0]:.6f}")
 
             # Create signal with proper energy axis
-            temp_signal = hs.signals.Signal1D(spectrum)
+            temp_signal = Signal1D(spectrum)
             temp_signal.axes_manager[0].scale = energy[1] - energy[0] if len(energy) > 1 else 0.01
             temp_signal.axes_manager[0].offset = energy[0]
             temp_signal.axes_manager[0].units = 'keV'
             temp_signal.axes_manager[0].name = 'Energy'
-            temp_signal.set_signal_type("EDS_SEM")
 
             # Get threshold
             threshold = 0.02  # Default 2%
@@ -2958,7 +3212,17 @@ class EDXSEMWindow(wx.Frame):
                 self.identified_peaks = []
                 return
 
-            peaks = peak_data[0] if len(peak_data.shape) > 1 or peak_data.dtype == object else peak_data
+            # Handle nested array format
+            if peak_data.ndim > 1:
+                peaks = peak_data[0]
+            else:
+                peaks = peak_data
+
+            # Handle empty inner array
+            if len(peaks) == 0 or (isinstance(peaks, np.ndarray) and peaks.size == 0):
+                self.identified_peaks = []
+                return
+
             print(f"Found {len(peaks)} peaks")
 
             # Build peak database with energies and heights
@@ -3032,7 +3296,7 @@ class EDXSEMWindow(wx.Frame):
         2. User-selected elements reserve ALL their line positions
         3. Rare elements are heavily penalized unless user-selected
         """
-        from exspy.utils.eds import get_xray_lines_near_energy
+        from libraries.EDX_Utilities import get_xray_lines_near_energy
 
         include_elements = include_elements or set()
         exclude_elements = exclude_elements or set()
@@ -3204,7 +3468,7 @@ class EDXSEMWindow(wx.Frame):
             if elem in ELEMENT_LINES:
                 for line_type, energy in ELEMENT_LINES[elem].items():
                     reserved_energies[energy] = elem
-                    print(f"Reserved {energy:.3f} keV for {elem} {line_type}")
+                    # print(f"Reserved {energy:.3f} keV for {elem} {line_type}")
 
         # ============================================================
         # STEP 2: Find strong Ka peaks and reserve their Kb positions
@@ -3253,7 +3517,7 @@ class EDXSEMWindow(wx.Frame):
                         if ratio_range[0] * 0.5 <= ratio <= ratio_range[1] * 1.5:
                             if kb_energy not in reserved_energies:
                                 reserved_energies[kb_energy] = elem
-                                print(f"Strong Ka found: reserving Kb at {kb_energy:.3f} keV for {elem}")
+                                # print(f"Strong Ka found: reserving Kb at {kb_energy:.3f} keV for {elem}")
 
         # ============================================================
         # STEP 3: Similarly for strong La peaks, reserve Lb positions
@@ -3294,7 +3558,7 @@ class EDXSEMWindow(wx.Frame):
                         if ratio_range[0] * 0.5 <= ratio <= ratio_range[1] * 1.5:
                             if lb_energy not in reserved_energies:
                                 reserved_energies[lb_energy] = elem
-                                print(f"Strong La found: reserving Lb at {lb_energy:.3f} keV for {elem}")
+                                # print(f"Strong La found: reserving Lb at {lb_energy:.3f} keV for {elem}")
 
         # ============================================================
         # STEP 4: Score all elements considering reservations
@@ -3482,7 +3746,7 @@ class EDXSEMWindow(wx.Frame):
                 for peak_energy, elem, line_type in lines_to_add:
                     identified.append((peak_energy, elem, line_type))
                     used_energies.add(peak_energy)
-                    print(f"Identified: {elem} {line_type} at {peak_energy:.3f} keV (score: {data['score']:.2f})")
+                    # print(f"Identified: {elem} {line_type} at {peak_energy:.3f} keV (score: {data['score']:.2f})")
 
         # ============================================================
         # STEP 6: Handle reserved but unmatched peaks
@@ -3500,7 +3764,7 @@ class EDXSEMWindow(wx.Frame):
                         if peak and height > 0:
                             identified.append((peak, elem, line_type))
                             used_energies.add(peak)
-                            print(f"Identified (reserved): {elem} {line_type} at {peak:.3f} keV")
+                            # print(f"Identified (reserved): {elem} {line_type} at {peak:.3f} keV")
                         break
 
         # ============================================================
@@ -3556,7 +3820,7 @@ class EDXSEMWindow(wx.Frame):
                 elem, line_type = best_match.split('_')
                 identified.append((peak_energy, elem, line_type))
                 used_energies.add(peak_energy)
-                print(f"Identified (unpaired): {elem} {line_type} at {peak_energy:.3f} keV")
+                # print(f"Identified (unpaired): {elem} {line_type} at {peak_energy:.3f} keV")
 
         return identified
 
@@ -3824,7 +4088,113 @@ class EDXSEMWindow(wx.Frame):
             import traceback
             traceback.print_exc()
 
-    def _calculate_atomic_percent(self, energy, spectrum, elements):
+    def _calculate_atomic_percent(self, energy, spectrum, elements_list):
+        """Calculate atomic percentages from peak intensities using identified Ka peaks"""
+        from libraries.EDX_Utilities import elements as edx_elements
+
+        results = []
+        total_intensity = 0
+        element_intensities = {}
+
+        # Use identified Ka peaks if available
+        if hasattr(self, 'identified_ka_peaks') and self.identified_ka_peaks:
+            print(f"Using {len(self.identified_ka_peaks)} identified Ka peaks for quantification")
+
+            for peak_energy, element, line_type in self.identified_ka_peaks:
+                try:
+                    if element not in edx_elements:
+                        continue
+                    elem_obj = edx_elements[element]
+
+                    # Find peak intensity at this energy
+                    idx = np.argmin(np.abs(energy - peak_energy))
+
+                    # Integrate around peak
+                    window = 5  # channels
+                    start_idx = max(0, idx - window)
+                    end_idx = min(len(spectrum), idx + window)
+                    peak_intensity = np.sum(spectrum[start_idx:end_idx])
+
+                    # Get atomic weight for normalization
+                    atomic_weight = elem_obj.General_properties.atomic_weight
+
+                    element_intensities[element] = {
+                        'intensity': peak_intensity,
+                        'line': line_type,
+                        'energy': peak_energy,
+                        'atomic_weight': atomic_weight
+                    }
+                    total_intensity += peak_intensity
+
+                except (KeyError, AttributeError) as e:
+                    print(f"Could not process element {element}: {e}")
+                    continue
+        else:
+            # Fallback to old method using selected elements
+            print("No identified Ka peaks found, using selected elements")
+            for element in elements_list:
+                try:
+                    if element not in edx_elements:
+                        continue
+                    elem_obj = edx_elements[element]
+
+                    if elem_obj.Atomic_properties is None:
+                        continue
+                    xray_lines = elem_obj.Atomic_properties.Xray_lines
+                    if xray_lines is None:
+                        continue
+
+                    # Find the strongest line (Ka preferred, then La)
+                    best_line = None
+                    best_energy = None
+                    for line_type in ['Ka', 'La', 'Ma']:
+                        line_obj = getattr(xray_lines, line_type, None)
+                        if line_obj is not None:
+                            best_line = line_type
+                            best_energy = line_obj.energy_keV
+                            break
+
+                    if best_energy is not None:
+                        # Find peak intensity at this energy
+                        idx = np.argmin(np.abs(energy - best_energy))
+
+                        # Integrate around peak (simple approach)
+                        window = 5  # channels
+                        start_idx = max(0, idx - window)
+                        end_idx = min(len(spectrum), idx + window)
+                        peak_intensity = np.sum(spectrum[start_idx:end_idx])
+
+                        # Get atomic weight for normalization
+                        atomic_weight = elem_obj.General_properties.atomic_weight
+
+                        element_intensities[element] = {
+                            'intensity': peak_intensity,
+                            'line': best_line,
+                            'energy': best_energy,
+                            'atomic_weight': atomic_weight
+                        }
+                        total_intensity += peak_intensity
+
+                except (KeyError, AttributeError) as e:
+                    print(f"Could not process element {element}: {e}")
+                    continue
+
+        # Calculate atomic percentages (simplified - without k-factors)
+        if total_intensity > 0:
+            for element, data in element_intensities.items():
+                # Simple normalized intensity (not true atomic %)
+                percent = (data['intensity'] / total_intensity) * 100
+                results.append({
+                    'element': element,
+                    'line': data['line'],
+                    'energy': data['energy'],
+                    'atomic_percent': percent,
+                    'intensity': data['intensity']
+                })
+
+        return results
+
+    def _calculate_atomic_percent_OLD(self, energy, spectrum, elements):
         """Calculate atomic percentages from peak intensities using identified Ka peaks"""
         from exspy.material import elements as exspy_elements
 
@@ -4073,7 +4443,7 @@ class EDXSEMWindow(wx.Frame):
         if results:
             self._update_peak_params_grid_hyperspy(results, self.quant_settings.composition_units)
 
-    def _calculate_quantification_from_identified(self, energy, spectrum, element_peaks):
+    def _calculate_quantification_from_identified_OLD(self, energy, spectrum, element_peaks):
         """
         Calculate quantification using the peaks that were identified during labeling.
         This ensures consistency between plot labels and grid values.
@@ -4212,10 +4582,93 @@ class EDXSEMWindow(wx.Frame):
             traceback.print_exc()
             return []
 
+    def _calculate_quantification_from_identified(self, energy, spectrum, element_peaks):
+        """
+        Calculate quantification using the peaks that were identified during labeling.
+        This ensures consistency between plot labels and grid values.
+
+        element_peaks is a dict: {element: [(peak_energy, line_type), ...]}
+        """
+        try:
+            from libraries.EDX_Utilities import elements as edx_elements, DEFAULT_KFACTORS
+
+            results = []
+            intensities = []
+            kfactors = []
+
+            # element_peaks is a dict: {element: [(peak_energy, line_type), ...]}
+            for element, peaks_list in element_peaks.items():
+                try:
+                    if element not in edx_elements:
+                        continue
+
+                    elem_obj = edx_elements[element]
+
+                    # Use the first (primary) peak for this element
+                    if not peaks_list:
+                        continue
+
+                    peak_energy, line_type = peaks_list[0]
+
+                    # Find peak intensity
+                    idx = np.argmin(np.abs(energy - peak_energy))
+                    window = 5
+                    start_idx = max(0, idx - window)
+                    end_idx = min(len(spectrum), idx + window)
+
+                    peak_spectrum = spectrum[start_idx:end_idx]
+                    peak_height = float(np.max(peak_spectrum))
+                    area = float(np.sum(peak_spectrum))
+
+                    # Get k-factor
+                    kfactor_key = f"{element}_{line_type}"
+                    kfactor = DEFAULT_KFACTORS.get(kfactor_key, 1.0)
+
+                    intensities.append(area)
+                    kfactors.append(kfactor)
+
+                    results.append({
+                        'element': element,
+                        'line': line_type,
+                        'energy': peak_energy,
+                        'height': peak_height,
+                        'area': area,
+                        'kfactor': kfactor
+                    })
+
+                except Exception as e:
+                    print(f"Error processing {element}: {e}")
+                    continue
+
+            # Calculate atomic percentages using Cliff-Lorimer
+            if len(intensities) > 0:
+                intensities_arr = np.array(intensities)
+                kfactors_arr = np.array(kfactors)
+
+                corrected = intensities_arr / kfactors_arr
+                total = np.sum(corrected)
+
+                if total > 0:
+                    for i, result in enumerate(results):
+                        result['atomic_percent'] = (corrected[i] / total) * 100
+
+            return results
+
+        except Exception as e:
+            print(f"Quantification error: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
     def _detect_elements_from_spectrum(self, energy, spectrum):
         """Auto-detect elements from spectrum peaks"""
         try:
-            from exspy.utils.eds import get_xray_lines_near_energy
+            # from exspy.utils.eds import get_xray_lines_near_energy
+
+            from libraries.EDX_Utilities import (
+                elements, get_xray_lines_near_energy, Signal1D,
+                find_peaks1D_ohaver, DEFAULT_KFACTORS
+            )
             from scipy.signal import find_peaks
 
             detected_elements = []
@@ -4261,7 +4714,57 @@ class EDXSEMWindow(wx.Frame):
             print(f"Element detection error: {e}")
             return []
 
-    def _calculate_quantification_hyperspy(self, energy, spectrum):
+    def _detect_elements_from_spectrum(self, energy, spectrum):
+        """Auto-detect elements from spectrum peaks"""
+        try:
+            from libraries.EDX_Utilities import get_xray_lines_near_energy, Signal1D
+
+            # Create signal for peak finding
+            temp_signal = Signal1D(spectrum)
+            temp_signal.axes_manager[0].scale = energy[1] - energy[0] if len(energy) > 1 else 0.01
+            temp_signal.axes_manager[0].offset = energy[0]
+
+            # Find peaks
+            amp_thresh = np.max(spectrum) * 0.02
+            peak_data = temp_signal.find_peaks1D_ohaver(
+                maxpeakn=50,
+                medfilt_radius=5,
+                amp_thresh=amp_thresh
+            )
+
+            if peak_data is None or len(peak_data) == 0:
+                return []
+
+            # Handle nested array
+            if peak_data.ndim > 1:
+                peaks = peak_data[0]
+            else:
+                peaks = peak_data
+
+            if len(peaks) == 0:
+                return []
+
+            # Identify elements from peaks
+            detected = set()
+            for peak in peaks:
+                try:
+                    peak_energy = float(peak[0])
+                    matches = get_xray_lines_near_energy(peak_energy, tolerance=0.15)
+                    if matches:
+                        # Take the closest match
+                        detected.add(matches[0][0])  # Element symbol
+                except (TypeError, IndexError):
+                    continue
+
+            return list(detected)
+
+        except Exception as e:
+            print(f"Error detecting elements: {e}")
+            return []
+
+
+
+    def _calculate_quantification_hyperspy_OLD(self, energy, spectrum):
         """
         Calculate EDX quantification using HyperSpy/ExSpy Cliff-Lorimer method.
         This provides accurate atomic% using proper k-factors.
@@ -4488,6 +4991,207 @@ class EDXSEMWindow(wx.Frame):
             # Fall back to simple method
             return self._calculate_quantification(energy, spectrum, elements if 'elements' in dir() else [])
 
+    def _calculate_quantification_hyperspy(self, energy, spectrum):
+        """
+        Calculate EDX quantification using Cliff-Lorimer method.
+        This provides accurate atomic% using proper k-factors.
+        Now uses standalone EDX_Utilities instead of HyperSpy.
+        """
+        try:
+            from libraries.EDX_Utilities import elements as edx_elements, Signal1D, DEFAULT_KFACTORS
+
+            # Get quantification settings
+            if not hasattr(self, 'quant_settings'):
+                self.quant_settings = EDXQuantificationSettings()
+
+            settings = self.quant_settings
+
+            # Detect elements from spectrum
+            detected_elements = self._detect_elements_from_spectrum(energy, spectrum)
+
+            if not detected_elements:
+                print("No elements detected for quantification")
+                return []
+
+            # Sort elements alphabetically
+            detected_elements = sorted(detected_elements)
+
+            # Get k-factors for detected elements
+            kfactors, xray_lines = settings.get_all_kfactors_for_elements(detected_elements)
+
+            print(f"Quantification - Elements: {detected_elements}")
+            print(f"X-ray lines: {xray_lines}")
+            print(f"K-factors: {kfactors}")
+
+            # Calculate intensities for each element
+            intensities = []
+            valid_elements = []
+            valid_kfactors = []
+            valid_lines = []
+
+            for i, element in enumerate(detected_elements):
+                try:
+                    if element not in edx_elements:
+                        continue
+
+                    elem_obj = edx_elements[element]
+                    if elem_obj.Atomic_properties is None:
+                        continue
+                    if elem_obj.Atomic_properties.Xray_lines is None:
+                        continue
+
+                    xray_props = elem_obj.Atomic_properties.Xray_lines
+
+                    # Find the line energy
+                    line_type = xray_lines[i].split('_')[1] if i < len(xray_lines) else 'Ka'
+
+                    line_obj = getattr(xray_props, line_type, None)
+                    if line_obj is not None:
+                        line_energy = line_obj.energy_keV
+                    else:
+                        # Try to find any available line
+                        line_energy = None
+                        for lt in ['Ka', 'La', 'Ma']:
+                            line_obj = getattr(xray_props, lt, None)
+                            if line_obj is not None:
+                                line_type = lt
+                                line_energy = line_obj.energy_keV
+                                break
+                        if line_energy is None:
+                            continue
+
+                    # Define integration window
+                    window = 0.15  # keV
+                    mask = (energy >= line_energy - window) & (energy <= line_energy + window)
+
+                    if not np.any(mask):
+                        continue
+
+                    peak_spectrum = spectrum[mask]
+
+                    # Background subtraction if enabled
+                    if settings.use_background_subtraction:
+                        bg_width = settings.background_window_width
+                        bg_left_mask = (energy >= line_energy - window - bg_width) & (energy < line_energy - window)
+                        bg_right_mask = (energy > line_energy + window) & (energy <= line_energy + window + bg_width)
+
+                        bg_left = spectrum[bg_left_mask].mean() if np.any(bg_left_mask) else 0
+                        bg_right = spectrum[bg_right_mask].mean() if np.any(bg_right_mask) else 0
+                        background = (bg_left + bg_right) / 2
+
+                        net_intensity = np.sum(peak_spectrum) - background * len(peak_spectrum)
+                    else:
+                        net_intensity = np.sum(peak_spectrum)
+
+                    if net_intensity > 0:
+                        intensities.append(net_intensity)
+                        valid_elements.append(element)
+                        valid_kfactors.append(kfactors[i] if i < len(kfactors) else 1.0)
+                        valid_lines.append(f"{element}_{line_type}")
+
+                except Exception as e:
+                    print(f"Error processing element {element}: {e}")
+                    continue
+
+            if len(intensities) < 2:
+                print("Not enough valid elements for quantification")
+                return self._calculate_quantification(energy, spectrum, detected_elements)
+
+            # Calculate composition using Cliff-Lorimer method
+            intensities_arr = np.array(intensities)
+            kfactors_arr = np.array(valid_kfactors)
+
+            # Corrected intensities (divide by k-factor)
+            corrected = intensities_arr / kfactors_arr
+
+            # Normalize to 100%
+            total_corrected = np.sum(corrected)
+            atomic_percent = (corrected / total_corrected) * 100
+
+            # Convert to weight percent if requested
+            if settings.composition_units == 'weight':
+                weight_percent = []
+                total_weight = 0
+
+                for i, element in enumerate(valid_elements):
+                    try:
+                        elem_obj = edx_elements[element]
+                        atomic_weight = elem_obj.General_properties.atomic_weight
+                        weight_percent.append(atomic_percent[i] * atomic_weight)
+                        total_weight += atomic_percent[i] * atomic_weight
+                    except:
+                        weight_percent.append(atomic_percent[i])
+                        total_weight += atomic_percent[i]
+
+                weight_percent = np.array(weight_percent)
+                weight_percent = (weight_percent / total_weight) * 100
+                composition = weight_percent
+                units = 'wt%'
+            else:
+                composition = atomic_percent
+                units = 'at%'
+
+            # Build results list
+            results = []
+            for i, element in enumerate(valid_elements):
+                try:
+                    elem_obj = edx_elements[element]
+                    xray_props = elem_obj.Atomic_properties.Xray_lines
+
+                    line_type = valid_lines[i].split('_')[1]
+                    line_obj = getattr(xray_props, line_type, None)
+                    line_energy = line_obj.energy_keV if line_obj else 0
+
+                    # Get peak parameters
+                    window = 0.15
+                    mask = (energy >= line_energy - window) & (energy <= line_energy + window)
+                    peak_spectrum = spectrum[mask]
+                    peak_height = float(np.max(peak_spectrum)) if len(peak_spectrum) > 0 else 0
+
+                    # Estimate FWHM
+                    if len(peak_spectrum) > 0:
+                        half_max = np.min(peak_spectrum) + (np.max(peak_spectrum) - np.min(peak_spectrum)) / 2
+                        above_half = peak_spectrum >= half_max
+                        if np.any(above_half):
+                            indices = np.where(above_half)[0]
+                            if len(indices) > 1:
+                                peak_energy_vals = energy[mask]
+                                fwhm_kev = peak_energy_vals[indices[-1]] - peak_energy_vals[indices[0]]
+                            else:
+                                fwhm_kev = 0.1
+                        else:
+                            fwhm_kev = 0.1
+                    else:
+                        fwhm_kev = 0.1
+
+                    # Area calculation
+                    area = intensities[i]
+
+                    results.append({
+                        'element': element,
+                        'line': line_type,
+                        'energy': line_energy,
+                        'height': peak_height,
+                        'fwhm': fwhm_kev,
+                        'area': area,
+                        'atomic_percent': atomic_percent[i],
+                        'composition': composition[i],
+                        'units': units,
+                        'kfactor': valid_kfactors[i]
+                    })
+
+                except Exception as e:
+                    print(f"Error building result for {element}: {e}")
+                    continue
+
+            return results
+
+        except Exception as e:
+            print(f"Quantification error: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
     def _update_peak_params_grid_hyperspy(self, results, units="at%"):
         """Update peak fitting grid with HyperSpy quantification results"""
         if self.parent is None or not hasattr(self.parent, 'peak_params_grid'):
@@ -4561,7 +5265,7 @@ class EDXSEMWindow(wx.Frame):
                     grid_data.append(row_data)
                 self.parent.Data['Core levels'][current_sheet]['_EDX_grid_data'] = grid_data
 
-    def _calculate_quantification(self, energy, spectrum, elements):
+    def _calculate_quantification_OLD(self, energy, spectrum, elements):
         """Calculate quantification with peak fitting parameters"""
         try:
             from exspy.material import elements as exspy_elements
@@ -4655,6 +5359,111 @@ class EDXSEMWindow(wx.Frame):
             if total_intensity > 0:
                 for res in results:
                     res['concentration'] = (res['area'] / total_intensity) * 100
+
+            return results
+
+        except Exception as e:
+            print(f"Quantification error: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+    def _calculate_quantification_from_identified(self, energy, spectrum, element_peaks):
+        """
+        Calculate quantification using the peaks that were identified during labeling.
+        This ensures consistency between plot labels and grid values.
+
+        element_peaks is a dict: {element: [(peak_energy, line_type), ...]}
+        """
+        try:
+            from libraries.EDX_Utilities import elements as edx_elements, DEFAULT_KFACTORS
+
+            results = []
+            total_intensity = 0
+
+            # element_peaks is a dict: {element: [(peak_energy, line_type), ...]}
+            for element, peaks_list in element_peaks.items():
+                try:
+                    if element not in edx_elements:
+                        continue
+
+                    elem_obj = edx_elements[element]
+
+                    # Use the first (primary) peak for this element
+                    if not peaks_list:
+                        continue
+
+                    peak_energy, line_type = peaks_list[0]
+
+                    # Find peak in spectrum near this energy
+                    idx = np.argmin(np.abs(energy - peak_energy))
+
+                    # Define integration window (±0.15 keV typical for EDX)
+                    energy_window = 0.15  # keV
+                    mask = (energy >= peak_energy - energy_window) & (energy <= peak_energy + energy_window)
+
+                    if not np.any(mask):
+                        continue
+
+                    # Extract peak region
+                    peak_energy_arr = energy[mask]
+                    peak_spectrum = spectrum[mask]
+
+                    if len(peak_spectrum) == 0:
+                        continue
+
+                    # Calculate peak parameters
+                    peak_height = float(np.max(peak_spectrum))
+
+                    # Estimate background as minimum in the window
+                    background = float(np.min(peak_spectrum))
+
+                    # Net peak height
+                    net_height = peak_height - background
+
+                    # Estimate FWHM from the peak shape
+                    half_max = background + net_height / 2
+                    above_half = peak_spectrum >= half_max
+                    if np.any(above_half):
+                        indices = np.where(above_half)[0]
+                        if len(indices) > 1:
+                            fwhm_kev = peak_energy_arr[indices[-1]] - peak_energy_arr[indices[0]]
+                        else:
+                            fwhm_kev = 0.1  # Default 100 eV
+                    else:
+                        fwhm_kev = 0.1
+
+                    # Calculate area using Gaussian approximation: Area ≈ Height × FWHM × 1.064
+                    peak_area = net_height * (fwhm_kev * 1000) * 1.064  # Convert FWHM to eV for area calc
+
+                    # Get atomic weight
+                    atomic_weight = elem_obj.General_properties.atomic_weight
+
+                    # Get k-factor
+                    kfactor_key = f"{element}_{line_type}"
+                    kfactor = DEFAULT_KFACTORS.get(kfactor_key, 1.0)
+
+                    results.append({
+                        'element': element,
+                        'line': line_type,
+                        'energy': peak_energy,
+                        'height': net_height,
+                        'area': peak_area,
+                        'fwhm': fwhm_kev * 1000,  # Store in eV
+                        'atomic_weight': atomic_weight,
+                        'kfactor': kfactor
+                    })
+                    total_intensity += peak_area
+
+                except Exception as e:
+                    print(f"Error processing {element}: {e}")
+                    continue
+
+            # Calculate concentration (atomic percentages)
+            if total_intensity > 0:
+                for res in results:
+                    res['concentration'] = (res['area'] / total_intensity) * 100
+                    res['atomic_percent'] = res['concentration']  # Alias for compatibility
 
             return results
 
@@ -5793,7 +6602,7 @@ class EDXSensitivityWindow(wx.Frame):
         x_max_label = wx.StaticText(display_panel, label="X Max (keV):")
         x_max_box.Add(x_max_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
 
-        self.x_max_spin = wx.SpinCtrl(display_panel, value="20", min=1, max=50, size=(80, -1))
+        self.x_max_spin = wx.SpinCtrl(display_panel, value="20", min=1, max=50000, size=(80, -1))
         self.x_max_spin.SetToolTip("Set maximum X-axis energy (0 to X)")
         self.x_max_spin.Bind(wx.EVT_SPINCTRL, self.on_x_max_change)
         x_max_box.Add(self.x_max_spin, 0, wx.ALIGN_CENTER_VERTICAL)
@@ -6146,7 +6955,14 @@ class EDXSensitivityWindow(wx.Frame):
                         if spectrum is not None:
                             self.parent._calculate_quantification_hyperspy(energy, spectrum)
 
-                self.parent.PlotManager.plot_edx_data(self.parent.parent, current_sheet)
+                # Refresh the plot using the main window's plot manager
+                if hasattr(self.parent.parent, 'plot_manager') and self.parent.parent.plot_manager:
+                    self.parent.parent.plot_manager.plot_edx_data(self.parent.parent, current_sheet)
+                elif hasattr(self.parent.parent, 'PlotManager') and self.parent.parent.PlotManager:
+                    self.parent.parent.PlotManager.plot_edx_data(self.parent.parent, current_sheet)
+                else:
+                    # Fallback: just redraw the canvas
+                    self.parent.parent.canvas.draw_idle()
 
     def _save_settings(self):
         """Save quantification settings to Data structure"""

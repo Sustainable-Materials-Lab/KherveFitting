@@ -2084,6 +2084,12 @@ class PlotManager:
         Updates the plot for a selected peak when its position or height is changed.
         Recalculates the peak shape based on the current fitting model and parameters.
         """
+        # Skip for EDX sheets - they don't use XPS peak fitting
+        if hasattr(window, 'sheet_combobox'):
+            current_sheet = window.sheet_combobox.GetValue()
+            if current_sheet.startswith('EDX~'):
+                return
+
         if window.x_values is None or window.background is None:
             print("Error: x_values or background is None. Cannot update peak plot.")
             return
@@ -3952,7 +3958,6 @@ class PlotManager:
         """Plot EDX data when EDX~Plot or EDX~Map sheet is selected"""
         import os
         import numpy as np
-        import hyperspy.api as hs
         from libraries.ToolsMenu.EDX_SEM_Analysis import open_edx_sem_window
 
         try:
@@ -4053,6 +4058,8 @@ class PlotManager:
                 else:
                     self.ax.set_title('EDX Sum Spectrum', color=title_color)
 
+                self.ax.set_title(' ', color=title_color)
+
                 # Set Y-axis to scientific format
                 self.ax.ticklabel_format(axis='y', style='scientific', scilimits=(0, 0))
 
@@ -4077,7 +4084,7 @@ class PlotManager:
                 self.ax.set_xlim(0, display_x_max)
                 self.ax.set_ylim(np.min(intensity) * 0.95, np.max(intensity) * 1.1)
 
-                # ALWAYS add peak labels - try multiple HDF5 path variants
+                # Add peak labels using EDX window if available
                 hdf5_path = None
                 if hasattr(window, 'current_file_path') and window.current_file_path:
                     # Try different HDF5 path variations
@@ -4098,37 +4105,26 @@ class PlotManager:
                 if not hdf5_path and '_HDF5_Path' in window.Data['Core levels'].get('EDX~Map', {}):
                     hdf5_path = window.Data['Core levels']['EDX~Map']['_HDF5_Path']
 
-                if hdf5_path and os.path.exists(hdf5_path):
+
+                # Add peak labels - check if they already exist
+                if len(self.ax.texts) == 0:
+                    # No labels yet - add them
                     try:
-                        readers = ['HSPY', 'USID', 'Delmic']
-                        loaded_data = None
-                        for reader in readers:
-                            try:
-                                loaded_data = hs.load(hdf5_path, reader=reader)
-                                break
-                            except:
-                                continue
+                        from libraries.ToolsMenu.EDX_SEM_Analysis import EDXSEMWindow
+                        temp_edx = EDXSEMWindow(window)
+                        temp_edx.add_peak_labels(self.ax, energy, intensity)
 
-                        if loaded_data:
-                            if isinstance(loaded_data, list):
-                                loaded_data = loaded_data[0]
+                        # Apply label color based on style
+                        for text in self.ax.texts:
+                            text.set_color(label_color)
+                            text.set_fontweight('bold')
 
-                            from libraries.ToolsMenu.EDX_SEM_Analysis import EDXSEMWindow
-                            temp_edx = EDXSEMWindow(window)
-                            temp_edx.current_data = loaded_data
-                            temp_edx.add_peak_labels(self.ax, energy, intensity)
-
-                            # Apply label color based on style
-                            for text in self.ax.texts:
-                                text.set_color(label_color)
-                                text.set_fontweight('bold')
-
-                            temp_edx.Destroy()
-                            print(f"Added EDX peak labels from {hdf5_path}")
+                        temp_edx.Destroy()
+                        print("Added EDX peak labels")
                     except Exception as e:
                         print(f"Could not add EDX labels: {e}")
-                else:
-                    print(f"HDF5 file not found for EDX labels: {hdf5_path}")
+                        import traceback
+                        traceback.print_exc()
 
                 self.canvas.draw()
 
@@ -4340,8 +4336,15 @@ class PlotManager:
                     print(f"ERROR: {sheet_name} missing required data keys")
                     return False
 
-                # Clear the main plot
+                # Clear the main plot and all text annotations
                 self.ax.clear()
+
+                # Explicitly remove any lingering text labels
+                for txt in self.ax.texts[:]:
+                    try:
+                        txt.remove()
+                    except:
+                        pass
 
                 # Reset background to white for non-EDX plots
                 if not (sheet_name == 'EDX~Plot' or sheet_name.startswith('EDX~Plot')):

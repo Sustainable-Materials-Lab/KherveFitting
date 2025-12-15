@@ -4175,7 +4175,7 @@ def open_xlsx_file(window, file_path=None):
 
         for sheet_name in sheet_names:
             # Skip validation for zzProfile sheets - they have different column structure
-            if sheet_name.startswith('zzProfile'):
+            if sheet_name.startswith('zzProfile') or sheet_name.startswith('zzMap'):
                 continue
 
             # Skip validation for EDX sheets - they have different structures

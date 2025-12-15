@@ -43,6 +43,7 @@ from libraries.UsageAnalytics import show_usage_stats_window
 from libraries.FileMenu.Open import import_generic_excel_file
 from libraries.FileMenu.Igor_Import import import_igor_dat_file, import_igor_itx_file, import_multiple_igor_files
 from libraries.FileMenu.VGD_Import import import_vgd_file, import_multiple_vgd_files
+from libraries.FileMenu.Scienta_Import import import_scienta_map, import_scienta_file
 
 # With conditional imports:
 import platform
@@ -779,26 +780,59 @@ def create_menu(window):
     window.Bind(wx.EVT_MENU, lambda event: import_generic_excel_file(window), import_generic_excel_item)
 
     Import_xps_header = import_menu.Append(wx.ID_ANY, "▬▬▬▬▬▬▬▬ XPS Technique ▬▬▬▬▬▬▬▬▬▬")
-    Import_xps_header.Enable(False)  # Make it non-clickable
+    Import_xps_header.Enable(False)
 
-    import_avantage_item = import_menu.Append(wx.NewId(), "Thermo Avantage Data file (.xlsx or .xls)")
+    # Thermo submenu
+    thermo_menu = wx.Menu()
+    import_avantage_item = thermo_menu.Append(wx.NewId(), "Avantage Data file (.xlsx or .xls)")
     window.Bind(wx.EVT_MENU, lambda event: import_avantage_file(window), import_avantage_item)
-
-    import_multiple_avantage_item = import_menu.Append(wx.NewId(), "Thermo Avantage Multiple xlsx files (folder)")
+    import_multiple_avantage_item = thermo_menu.Append(wx.NewId(), "Avantage Multiple xlsx files (folder)")
     window.Bind(wx.EVT_MENU, lambda event: import_multiple_avantage_files(window), import_multiple_avantage_item)
-
-    vgd_item = import_menu.Append(wx.ID_ANY, "Thermo VGD file (.vgd)", "Import Thermo VGD file")
+    vgd_item = thermo_menu.Append(wx.ID_ANY, "VGD file (.vgd)")
     window.Bind(wx.EVT_MENU, lambda evt: import_vgd_file(window), vgd_item)
-
-    vgd_multi = import_menu.Append(wx.ID_ANY, "Thermo VGD Multiple files (folder)", "Import multiple VGD files")
+    vgd_multi = thermo_menu.Append(wx.ID_ANY, "VGD Multiple files (folder)")
     window.Bind(wx.EVT_MENU, lambda evt: import_multiple_vgd_files(window), vgd_multi)
-
-    import_avg_item = import_menu.Append(wx.NewId(), "Thermo AVG file (.avg)")
+    import_avg_item = thermo_menu.Append(wx.NewId(), "AVG file (.avg)")
     window.Bind(wx.EVT_MENU, lambda event: open_avg_file(window), import_avg_item)
-
-    import_multiple_avg_item = import_menu.Append(wx.NewId(), "Thermo AVG Multiple files .avg (folder)")
+    import_multiple_avg_item = thermo_menu.Append(wx.NewId(), "AVG Multiple files (folder)")
     window.Bind(wx.EVT_MENU, lambda event: import_multiple_avg_files(window), import_multiple_avg_item)
+    import_menu.AppendSubMenu(thermo_menu, "Thermo")
 
+    # Scienta submenu
+    scienta_menu = wx.Menu()
+    scienta_item = scienta_menu.Append(wx.ID_ANY, "Map file (.txt)")
+    window.Bind(wx.EVT_MENU, lambda evt: import_scienta_map(window), scienta_item)
+    scienta_file_item = scienta_menu.Append(wx.ID_ANY, "Plot file (.txt)")
+    window.Bind(wx.EVT_MENU, lambda evt: import_scienta_file(window), scienta_file_item)
+    import_menu.AppendSubMenu(scienta_menu, "Scienta")
+
+    # MRS submenu
+    mrs_menu = wx.Menu()
+    import_mrs_item = mrs_menu.Append(wx.NewId(), "Data file (.mrs)")
+    window.Bind(wx.EVT_MENU, lambda event: import_mrs_file(window), import_mrs_item)
+    import_multiple_mrs_item = mrs_menu.Append(wx.NewId(), "Multiple files (folder)")
+    window.Bind(wx.EVT_MENU, lambda event: import_multiple_mrs_files(window), import_multiple_mrs_item)
+    import_menu.AppendSubMenu(mrs_menu, "MRS")
+
+    # VG-Microtech submenu
+    vg_menu = wx.Menu()
+    import_vg_microtech_item = vg_menu.Append(wx.NewId(), "File (.1)")
+    window.Bind(wx.EVT_MENU, lambda event: open_vg_microtech_file_dialog(window), import_vg_microtech_item)
+    import_multiple_vg_microtech_item = vg_menu.Append(wx.NewId(), "Multiple files (folder)")
+    window.Bind(wx.EVT_MENU, lambda event: import_multiple_vg_microtech_files(window), import_multiple_vg_microtech_item)
+    import_menu.AppendSubMenu(vg_menu, "VG-Microtech")
+
+    # Igor submenu
+    igor_menu = wx.Menu()
+    igor_itx_item = igor_menu.Append(wx.ID_ANY, "ITX file (*.itx)")
+    window.Bind(wx.EVT_MENU, lambda evt: import_igor_itx_file(window), igor_itx_item)
+    igor_dat_item = igor_menu.Append(wx.ID_ANY, "Data file (*.dat)")
+    window.Bind(wx.EVT_MENU, lambda evt: import_igor_dat_file(window), igor_dat_item)
+    igor_multiple_item = igor_menu.Append(wx.ID_ANY, "Multiple files (folder)")
+    window.Bind(wx.EVT_MENU, lambda evt: import_multiple_igor_files(window), igor_multiple_item)
+    import_menu.AppendSubMenu(igor_menu, "Igor")
+
+    # Single items
     import_vamas_item = import_menu.Append(wx.NewId(), "Vamas Data file (.vms)")
     window.Bind(wx.EVT_MENU, lambda event: open_vamas_file_dialog(window), import_vamas_item)
 
@@ -808,70 +842,48 @@ def create_menu(window):
     import_spe_item = import_menu.Append(wx.NewId(), "Phi Data file (.spe)")
     window.Bind(wx.EVT_MENU, lambda event: open_spe_file_dialog(window), import_spe_item)
 
-    # Add MRS file import items
-    import_mrs_item = import_menu.Append(wx.NewId(), "MRS Data file (.mrs)")
-    window.Bind(wx.EVT_MENU, lambda event: import_mrs_file(window), import_mrs_item)
-
-    import_multiple_mrs_item = import_menu.Append(wx.NewId(), "MRS Multiple files .mrs (folder)")
-    window.Bind(wx.EVT_MENU, lambda event: import_multiple_mrs_files(window), import_multiple_mrs_item)
-
-    # Import VG Microtech
-    import_vg_microtech_item = import_menu.Append(wx.NewId(), "VG-Microtech file (.1)")
-    window.Bind(wx.EVT_MENU, lambda event: open_vg_microtech_file_dialog(window), import_vg_microtech_item)
-
-    import_multiple_vg_microtech_item = import_menu.Append(wx.NewId(), "VG-Microtech Multiple files (folder)")
-    window.Bind(wx.EVT_MENU, lambda event: import_multiple_vg_microtech_files(window),
-                import_multiple_vg_microtech_item)
-
-
-    igor_itx_item = import_menu.Append(wx.ID_ANY, "Igor itx file (*.itx)", "Import Igor .itx file")
-    window.Bind(wx.EVT_MENU, lambda evt: import_igor_itx_file(window), igor_itx_item)
-
-    # In your create_menu function, within the Import submenu section
-    igor_dat_item = import_menu.Append(wx.ID_ANY, "Igor data file (*.dat)", "Import Igor .dat file")
-    window.Bind(wx.EVT_MENU, lambda evt: import_igor_dat_file(window), igor_dat_item)
-
-    igor_multiple_item = import_menu.Append(wx.ID_ANY, "Igor Multiple files (folder)", "Import multiple Igor .dat/.itx files")
-    window.Bind(wx.EVT_MENU, lambda evt: import_multiple_igor_files(window), igor_multiple_item)
-
     Import_gen_header = import_menu.Append(wx.ID_ANY, "▬▬▬▬▬▬▬▬ Generic XPS ▬▬▬▬▬▬▬▬▬▬▬▬")
-    Import_gen_header.Enable(False)  # Make it non-clickable
+    Import_gen_header.Enable(False)
 
-    # Import ASC files
-    import_xps_asc_item = import_menu.Append(wx.NewId(), "Generic .asc file (from Surface Science Spectra)")
+    # Generic ASC submenu
+    asc_menu = wx.Menu()
+    import_xps_asc_item = asc_menu.Append(wx.NewId(), "File (.asc)")
     window.Bind(wx.EVT_MENU, lambda event: import_xps_asc_file(window), import_xps_asc_item)
-
-    import_multiple_xps_asc_item = import_menu.Append(wx.NewId(), "Generic.asc Multiple files (from Surface Science Spectra)")
+    import_multiple_xps_asc_item = asc_menu.Append(wx.NewId(), "Multiple files (folder)")
     window.Bind(wx.EVT_MENU, lambda event: import_multiple_xps_asc_files(window), import_multiple_xps_asc_item)
+    import_menu.AppendSubMenu(asc_menu, "Generic .asc (Surface Science Spectra)")
 
-    # Import CSV files
-    import_xps_csv_item = import_menu.Append(wx.NewId(), "Generic .csv file")
+    # Generic CSV submenu
+    csv_menu = wx.Menu()
+    import_xps_csv_item = csv_menu.Append(wx.NewId(), "File (.csv)")
     window.Bind(wx.EVT_MENU, lambda event: import_xps_csv_file(window), import_xps_csv_item)
-
-    import_multiple_xps_csv_item = import_menu.Append(wx.NewId(), "Generic .csv Multiple files (folder)")
+    import_multiple_xps_csv_item = csv_menu.Append(wx.NewId(), "Multiple files (folder)")
     window.Bind(wx.EVT_MENU, lambda event: import_multiple_xps_csv_files(window), import_multiple_xps_csv_item)
+    import_menu.AppendSubMenu(csv_menu, "Generic .csv")
 
     Import_Other_header = import_menu.Append(wx.ID_ANY, "▬▬▬▬▬▬▬▬ Other Techniques ▬▬▬▬▬▬▬▬▬")
-    Import_Other_header.Enable(False)  # Make it non-clickable
+    Import_Other_header.Enable(False)
 
-    import_raman_item = import_menu.Append(wx.NewId(), "Raman .txt file")
+    # Raman submenu
+    raman_menu = wx.Menu()
+    import_raman_item = raman_menu.Append(wx.NewId(), "File (.txt)")
     window.Bind(wx.EVT_MENU, lambda event: import_raman_txt_file(window), import_raman_item)
-
-    import_multiple_raman_item = import_menu.Append(wx.NewId(), "Raman Multiple .txt files (folder)")
+    import_multiple_raman_item = raman_menu.Append(wx.NewId(), "Multiple files (folder)")
     window.Bind(wx.EVT_MENU, lambda event: import_multiple_raman_files(window), import_multiple_raman_item)
+    import_menu.AppendSubMenu(raman_menu, "Raman")
 
-    # Import Diamond-B07-XAS files
-    import_diamond_b07_xas_item = import_menu.Append(wx.NewId(), "XAS Diamond-B07 file (.txt/.dat)")
+    # XAS Diamond-B07 submenu
+    xas_menu = wx.Menu()
+    import_diamond_b07_xas_item = xas_menu.Append(wx.NewId(), "Diamond-B07 file (.txt/.dat)")
     window.Bind(wx.EVT_MENU, lambda event: import_diamond_b07_xas_file(window), import_diamond_b07_xas_item)
-
-    import_multiple_diamond_b07_xas_item = import_menu.Append(wx.NewId(), "XAS Multiple Diamond-B07 files (folder)")
+    import_multiple_diamond_b07_xas_item = xas_menu.Append(wx.NewId(), "Diamond-B07 Multiple files (folder)")
     window.Bind(wx.EVT_MENU, lambda event: import_multiple_diamond_b07_xas_files(window), import_multiple_diamond_b07_xas_item)
+    import_menu.AppendSubMenu(xas_menu, "XAS")
 
-    # Import EDX Map
+    # Single items for other techniques
     import_edx_map_item = import_menu.Append(wx.NewId(), "EDX Map (.hdf5)")
     window.Bind(wx.EVT_MENU, lambda event: import_edx_map_file(window), import_edx_map_item)
 
-    # Import EELS Map
     import_eels_map_item = import_menu.Append(wx.NewId(), "EELS Map (.dm3/.dm4)")
     window.Bind(wx.EVT_MENU, lambda event: import_eels_map_file(window), import_eels_map_item)
 
@@ -2421,7 +2433,7 @@ def open_pca_window(window):
     pca_window.Show()
 
 
-def import_edx_map_file(window):
+def import_edx_map_file_OLD(window):
     """Import EDX map file and open EDX/SEM analysis window"""
     import numpy as np
     import openpyxl
@@ -2641,6 +2653,370 @@ def import_edx_map_file(window):
                       "Error", wx.OK | wx.ICON_ERROR)
         import traceback
         traceback.print_exc()
+
+
+def import_edx_map_file(window):
+    """Import EDX map file and open EDX/SEM analysis window"""
+    import numpy as np
+    import openpyxl
+    from openpyxl.drawing.image import Image as OpenpyxlImage
+    from io import BytesIO
+    import matplotlib.pyplot as plt
+    from libraries.ToolsMenu.EDX_SEM_Analysis import open_edx_sem_window
+    import shutil
+    import json
+
+    # Import standalone EDX utilities instead of HyperSpy
+    from libraries.EDX_Utilities import Signal1D
+    from libraries.BCF_Reader import load_bcf
+
+    wildcard = "HDF5 files (*.hdf5;*.h5)|*.hdf5;*.h5|BCF files (*.bcf)|*.bcf|All files (*.*)|*.*"
+
+    with wx.FileDialog(window, "Open EDX Map file",
+                       wildcard=wildcard,
+                       style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dlg:
+        if dlg.ShowModal() != wx.ID_OK:
+            return
+
+        file_path = dlg.GetPath()
+
+    try:
+        # Initialize window.Data if needed
+        if not hasattr(window, 'Data'):
+            from libraries.ConfigFile import Init_Measurement_Data
+            window.Data = Init_Measurement_Data(window)
+
+        if 'Core levels' not in window.Data:
+            window.Data['Core levels'] = {}
+
+        # Load data based on file type
+        loaded_data = None
+        ext = os.path.splitext(file_path)[1].lower()
+
+        if ext == '.bcf':
+            # Use BCF Reader
+            try:
+                bcf_data = load_bcf(file_path)
+                if bcf_data.maps:
+                    # Convert BCF map to compatible format
+                    bcf_map = bcf_data.maps[0]
+                    loaded_data = _create_edx_signal_from_bcf(bcf_map)
+                    print("Successfully loaded BCF file with BCF_Reader")
+                elif bcf_data.spectra:
+                    bcf_spec = bcf_data.spectra[0]
+                    loaded_data = _create_edx_signal_from_bcf_spectrum(bcf_spec)
+                    print("Successfully loaded BCF spectrum with BCF_Reader")
+            except Exception as e:
+                print(f"BCF_Reader failed: {e}")
+
+        elif ext in ['.hdf5', '.h5']:
+            # Try to load HDF5 directly
+            try:
+                import h5py
+                loaded_data = _load_hdf5_edx(file_path)
+                print("Successfully loaded HDF5 file")
+            except Exception as e:
+                print(f"HDF5 load failed: {e}")
+
+        if loaded_data is None:
+            wx.MessageBox("Could not load file. Supported formats: BCF, HDF5",
+                          "Error", wx.OK | wx.ICON_ERROR)
+            return
+
+        # Create file paths
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+        excel_path = os.path.join(os.path.dirname(file_path), f"{base_name}_EDX.xlsx")
+        json_path = os.path.join(os.path.dirname(file_path), f"{base_name}_EDX.json")
+        hdf5_copy_path = os.path.join(os.path.dirname(file_path), f"{base_name}_EDX.hdf5")
+
+        # SET FILEPATH EARLY
+        window.Data['FilePath'] = excel_path
+        window.current_file_path = excel_path
+
+        # Update Working_directory
+        if hasattr(window, 'Working_directory'):
+            window.Working_directory = os.path.dirname(excel_path)
+
+        # Copy HDF5 file
+        if file_path.lower().endswith(('.hdf5', '.h5')):
+            shutil.copy2(file_path, hdf5_copy_path)
+            print(f"HDF5 copy saved to: {hdf5_copy_path}")
+
+        # Create workbook
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+
+        # Get energy axis from loaded data
+        energy_axis = loaded_data.get('energy_axis', None)
+        data_cube = loaded_data.get('data', None)
+
+        if data_cube is None:
+            wx.MessageBox("No data found in file.", "Error", wx.OK | wx.ICON_ERROR)
+            return
+
+        if energy_axis is not None:
+            energy_min = f"{np.min(energy_axis):.2f}"
+            energy_max = f"{np.max(energy_axis):.2f}"
+            energy_range = f"{energy_min} - {energy_max} keV"
+        else:
+            energy_range = "N/A"
+
+        # EDX~Plot sheet - sum spectrum
+        if data_cube.ndim == 3:
+            # Hyperspectral data cube (y, x, energy)
+            spectrum_data = np.sum(data_cube, axis=(0, 1))
+            map_data = np.sum(data_cube, axis=2)
+        elif data_cube.ndim == 2:
+            # Either a map or a spectrum
+            if data_cube.shape[0] > 100 and data_cube.shape[1] > 100:
+                # Likely a map
+                spectrum_data = np.sum(data_cube, axis=(0, 1)) if data_cube.ndim > 1 else data_cube
+                map_data = data_cube
+            else:
+                # Likely a spectrum
+                spectrum_data = data_cube.flatten()
+                map_data = None
+        else:
+            spectrum_data = data_cube.flatten()
+            map_data = None
+
+        if energy_axis is None:
+            energy_axis = np.arange(len(spectrum_data))
+
+        ws_plot = wb.create_sheet("EDX~Plot")
+        ws_plot.append(['Energy (keV)', 'Intensity', f'Range: {energy_range}'])
+
+        for i, intensity in enumerate(spectrum_data):
+            if i < len(energy_axis):
+                ws_plot.append([f"{energy_axis[i]:.2f}", f"{intensity:.2f}"])
+            else:
+                ws_plot.append([f"{i:.2f}", f"{intensity:.2f}"])
+
+        # EDX~Map sheet (if map data exists)
+        if map_data is not None:
+            ws_map = wb.create_sheet("EDX~Map")
+
+            ws_map.append([f'EDX Intensity Map - Range: {energy_range}'])
+            ws_map.append([''] * (map_data.shape[1] + 1))
+
+            for row in map_data:
+                ws_map.append([f"{val:.2f}" for val in row])
+
+            # Create map image
+            fig, ax = plt.subplots(figsize=(map_data.shape[1] / 100, map_data.shape[0] / 100), dpi=100)
+            im = ax.imshow(map_data, cmap='plasma')
+            ax.set_title(f'EDX Map - {energy_range}')
+            plt.colorbar(im, ax=ax)
+            ax.axis('off')
+
+            img_buffer = BytesIO()
+            fig.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
+            img_buffer.seek(0)
+            plt.close(fig)
+
+            img = OpenpyxlImage(img_buffer)
+            ws_map.add_image(img, f'A{map_data.shape[0] + 5}')
+
+        # Save Excel
+        wb.save(excel_path)
+        print(f"EDX data exported to: {excel_path}")
+
+        # ========== Add to window.Data - USE SAME STRUCTURE AS XPS ==========
+        energy_values = energy_axis if energy_axis is not None else np.arange(len(spectrum_data))
+
+        # Convert eV to keV if needed (EDX should be in keV, typically 0-20 range)
+        if np.max(energy_values) > 100:
+            energy_values = energy_values / 100.0
+            print(f"Converted energy axis from eV to keV: {np.min(energy_values):.2f} - {np.max(energy_values):.2f} keV")
+
+        # Add EDX~Plot sheet - SAME STRUCTURE AS XPS
+        window.Data['Core levels']['EDX~Plot'] = {
+            'Name': 'EDX~Plot',
+            'B.E.': list(energy_values),
+            'Raw Data': list(spectrum_data),
+            '_EDX_display_max': 20,
+            '_EDX_type': 'plot',
+            'Background': {}
+        }
+
+        # Add EDX~Map sheet
+        if map_data is not None:
+            window.Data['Core levels']['EDX~Map'] = {
+                'Name': 'EDX~Map',
+                'Map_Intensity': map_data.tolist(),
+                'Map_Shape': list(map_data.shape),
+                'Energy_Range': energy_range,
+                '_EDX_type': 'map',
+                '_HDF5_Path': hdf5_copy_path if os.path.exists(hdf5_copy_path) else file_path
+            }
+
+        # ========== Create JSON file ==========
+        json_data = {
+            'FilePath': excel_path,
+            'Core levels': {}
+        }
+
+        json_data['Core levels']['EDX~Plot'] = {
+            'Name': 'EDX~Plot',
+            'B.E.': [float(f"{v:.2f}") for v in energy_values],
+            'Raw Data': [float(f"{v:.2f}") for v in spectrum_data],
+            '_EDX_display_max': 20,
+            '_EDX_type': 'plot'
+        }
+
+        if map_data is not None:
+            json_data['Core levels']['EDX~Map'] = {
+                'Name': 'EDX~Map',
+                'Map_Intensity': [[float(f"{val:.2f}") for val in row] for row in map_data],
+                'Map_Shape': list(map_data.shape),
+                'Energy_Range': energy_range,
+                '_EDX_type': 'map',
+                '_HDF5_Path': hdf5_copy_path if os.path.exists(hdf5_copy_path) else file_path
+            }
+
+        with open(json_path, 'w') as jf:
+            json.dump(json_data, jf, indent=2)
+        print(f"JSON data saved to: {json_path}")
+
+        # Update status bar
+        if hasattr(window, 'SetStatusText'):
+            window.SetStatusText(f"Working Directory: {os.path.dirname(excel_path)}", 0)
+
+        # Update window title
+        if hasattr(window, 'SetTitle'):
+            window.SetTitle(f"KherveFitting - {os.path.basename(excel_path)}")
+
+        # Update sheet selector
+        window.sheet_combobox.Append('EDX~Plot')
+        if map_data is not None:
+            window.sheet_combobox.Append('EDX~Map')
+        window.sheet_combobox.SetValue('EDX~Plot')
+
+        # Update file location at bottom
+        if hasattr(window, 'file_path_text'):
+            window.file_path_text.SetLabel(f"File: {excel_path}")
+
+        # Open EDX/SEM analysis window
+        edx_window = open_edx_sem_window(window)
+        if edx_window:
+            window.edx_window = edx_window
+            edx_window.load_file(file_path, 'EDX Map')
+
+    except Exception as e:
+        wx.MessageBox(f"Error importing EDX map:\n{str(e)}",
+                      "Error", wx.OK | wx.ICON_ERROR)
+        import traceback
+        traceback.print_exc()
+
+
+def _create_edx_signal_from_bcf(bcf_map):
+    """Convert BCF map data to dictionary format"""
+    result = {
+        'data': bcf_map.data,
+        'energy_axis': bcf_map.energy if hasattr(bcf_map, 'energy') else None,
+        'metadata': bcf_map.metadata if hasattr(bcf_map, 'metadata') else {}
+    }
+    return result
+
+
+def _create_edx_signal_from_bcf_spectrum(bcf_spec):
+    """Convert BCF spectrum data to dictionary format"""
+    result = {
+        'data': bcf_spec.data,
+        'energy_axis': bcf_spec.energy if hasattr(bcf_spec, 'energy') else None,
+        'metadata': bcf_spec.metadata if hasattr(bcf_spec, 'metadata') else {}
+    }
+    return result
+
+
+def _load_hdf5_edx(file_path):
+    """Load EDX data from HDF5 file directly"""
+    import h5py
+    import numpy as np
+
+    result = {
+        'data': None,
+        'energy_axis': None,
+        'metadata': {}
+    }
+
+    with h5py.File(file_path, 'r') as f:
+        # Common HDF5 structures for EDX data
+        data_paths = [
+            'EDX/data', 'edx/data', 'Data/data',
+            'Experiments/EDX/data', 'entry/data/data',
+            'spectrum', 'data', 'counts'
+        ]
+
+        energy_paths = [
+            'EDX/energy', 'edx/energy', 'Data/energy',
+            'Experiments/EDX/energy', 'entry/data/energy',
+            'energy', 'axis', 'x'
+        ]
+
+        # Find data
+        for path in data_paths:
+            if path in f:
+                result['data'] = np.array(f[path])
+                print(f"Found data at: {path}")
+                break
+
+        # If not found, search recursively
+        if result['data'] is None:
+            def find_largest_dataset(group, path=''):
+                largest = None
+                largest_size = 0
+                for key in group.keys():
+                    item = group[key]
+                    if isinstance(item, h5py.Dataset):
+                        if item.size > largest_size and item.ndim >= 1:
+                            largest = np.array(item)
+                            largest_size = item.size
+                    elif isinstance(item, h5py.Group):
+                        sub_largest = find_largest_dataset(item, f"{path}/{key}")
+                        if sub_largest is not None and sub_largest.size > largest_size:
+                            largest = sub_largest
+                            largest_size = sub_largest.size
+                return largest
+
+            result['data'] = find_largest_dataset(f)
+
+        # Find energy axis
+        for path in energy_paths:
+            if path in f:
+                result['energy_axis'] = np.array(f[path])
+                print(f"Found energy at: {path}, range: {result['energy_axis'].min():.4f} - {result['energy_axis'].max():.4f}")
+                break
+
+        # Generate energy axis if not found
+        if result['energy_axis'] is None and result['data'] is not None:
+            if result['data'].ndim == 3:
+                n_channels = result['data'].shape[2]
+            else:
+                n_channels = result['data'].shape[-1]
+            # Default 10 eV per channel, starting at 0 (in keV)
+            result['energy_axis'] = np.arange(n_channels) * 0.01
+            print(f"Generated default energy axis: 0 - {(n_channels - 1) * 0.01:.2f} keV")
+
+        # Check if energy axis needs scaling to keV
+        # Typical EDX range is 0-20 keV
+        if result['energy_axis'] is not None:
+            max_energy = np.max(result['energy_axis'])
+            print(f"Energy axis max before conversion: {max_energy:.4f}")
+
+            if max_energy > 1000:  # Likely in eV (values like 20000)
+                result['energy_axis'] = result['energy_axis'] / 1000.0
+                print(f"Divided by 1000 (eV to keV)")
+            elif max_energy > 100:  # Likely in units of 100 eV or similar
+                result['energy_axis'] = result['energy_axis'] / 100.0
+                print(f"Divided by 100")
+            elif max_energy > 40:  # Likely in units of 10 eV
+                result['energy_axis'] = result['energy_axis'] / 10.0
+                print(f"Divided by 10")
+
+            print(f"Final energy range: {result['energy_axis'].min():.2f} - {result['energy_axis'].max():.2f} keV")
+
+    return result
 
 def import_eels_map_file(window):
     """Import EELS map file and open EELS analysis window"""

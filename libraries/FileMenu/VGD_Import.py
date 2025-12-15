@@ -474,6 +474,24 @@ def import_vgd_file(window, file_path=None, show_message=False):
         on_sheet_selected(window, None)
         save_state(window)
 
+        # Refresh sheets
+        update_console(f"Refreshing sheets...")
+        from libraries.FileMenu.Save import refresh_sheets
+        refresh_sheets(window, on_sheet_selected, update_console)
+
+        # Refresh Sample Manager if it's open
+        file_manager_was_open = False
+        file_manager_position = None
+        if hasattr(window, 'file_manager') and window.file_manager is not None:
+            try:
+                window.file_manager.GetSize()  # Check if window still exists
+                file_manager_was_open = True
+                file_manager_position = window.file_manager.GetPosition()
+                window.file_manager.Close()
+                window.file_manager = None
+            except RuntimeError:
+                window.file_manager = None
+
         update_console(f"\nImport complete!")
         if num_spectra > 1:
             update_console(f"  {core_level}: {num_spectra} spectra imported")
@@ -482,6 +500,14 @@ def import_vgd_file(window, file_path=None, show_message=False):
 
         # Close console after delay
         wx.CallLater(1500, console_frame.Close)
+
+        # Restore file manager
+        if file_manager_was_open:
+            from libraries.ViewMenu.FileManager import FileManagerWindow
+            window.file_manager = FileManagerWindow(window)
+            if file_manager_position:
+                window.file_manager.SetPosition(file_manager_position)
+            window.file_manager.Show()
 
     except Exception as e:
         import traceback
@@ -520,10 +546,30 @@ def import_multiple_vgd_files(window, file_paths=None, show_message=False):
     if not file_paths:
         return
 
+    # Ask for output filename first (before creating console)
+    output_dir = os.path.dirname(file_paths[0])
+    first_base = os.path.splitext(os.path.basename(file_paths[0]))[0]
+
+    if len(file_paths) > 1:
+        default_name = f"{first_base}_combined"
+    else:
+        default_name = first_base
+
+    with wx.TextEntryDialog(window, "Enter name for the output file:",
+                            "Output File Name", default_name) as dlg:
+        if dlg.ShowModal() == wx.ID_CANCEL:
+            return
+        output_name = dlg.GetValue().strip()
+        if not output_name:
+            output_name = default_name
+
+    excel_path = os.path.join(output_dir, f"{output_name}.xlsx")
+
     # Create console window centered on parent
     parent_pos = window.GetPosition()
     parent_size = window.GetSize()
-    console_frame = wx.Frame(window, title="Importing VGD Files", size=(400, 350))
+    console_frame = wx.Frame(window, title="Importing VGD Files", size=(400, 350),
+                             style=wx.DEFAULT_FRAME_STYLE | wx.STAY_ON_TOP)
     console_frame.SetPosition((
         parent_pos.x + (parent_size.width - 400) // 2,
         parent_pos.y + (parent_size.height - 350) // 2
@@ -538,16 +584,29 @@ def import_multiple_vgd_files(window, file_paths=None, show_message=False):
 
     try:
         update_console(f"Importing {len(file_paths)} VGD file(s)...")
+        update_console(f"Output file: {output_name}.xlsx")
 
-        # Use first file's directory and create combined filename
-        output_dir = os.path.dirname(file_paths[0])
-        first_base = os.path.splitext(os.path.basename(file_paths[0]))[0]
-
-        # If multiple files, use a combined name
-        if len(file_paths) > 1:
-            excel_path = os.path.join(output_dir, f"{first_base}_combined.xlsx")
-        else:
-            excel_path = os.path.join(output_dir, f"{first_base}.xlsx")
+        # output_dir = os.path.dirname(file_paths[0])
+        #
+        # first_base = os.path.splitext(os.path.basename(file_paths[0]))[0]
+        #
+        # if len(file_paths) > 1:
+        #     default_name = f"{first_base}_combined"
+        # else:
+        #     default_name = first_base
+        #
+        # with wx.TextEntryDialog(window, "Enter name for the output file:",
+        #                         "Output File Name", default_name) as dlg:
+        #     if dlg.ShowModal() == wx.ID_CANCEL:
+        #         return
+        #     output_name = dlg.GetValue().strip()
+        #     if not output_name:
+        #         output_name = default_name
+        #
+        # excel_path = os.path.join(output_dir, f"{output_name}.xlsx")
+        #
+        # update_console(f"Importing {len(file_paths)} VGD file(s)...")
+        # update_console(f"Output file: {output_name}.xlsx")
 
         wb = openpyxl.Workbook()
         wb.remove(wb.active)
@@ -705,11 +764,37 @@ def import_multiple_vgd_files(window, file_paths=None, show_message=False):
         on_sheet_selected(window, None)
         save_state(window)
 
+        # Refresh sheets
+        update_console(f"Refreshing sheets...")
+        from libraries.FileMenu.Save import refresh_sheets
+        refresh_sheets(window, on_sheet_selected, update_console)
+
+        # Refresh Sample Manager if it's open
+        file_manager_was_open = False
+        file_manager_position = None
+        if hasattr(window, 'file_manager') and window.file_manager is not None:
+            try:
+                window.file_manager.GetSize()  # Check if window still exists
+                file_manager_was_open = True
+                file_manager_position = window.file_manager.GetPosition()
+                window.file_manager.Close()
+                window.file_manager = None
+            except RuntimeError:
+                window.file_manager = None
+
         update_console(f"\nImport complete!")
         update_console(f"  {len(sheet_names)} core level(s) imported")
 
         # Close console after delay
         wx.CallLater(1500, console_frame.Close)
+
+        # Restore file manager
+        if file_manager_was_open:
+            from libraries.ViewMenu.FileManager import FileManagerWindow
+            window.file_manager = FileManagerWindow(window)
+            if file_manager_position:
+                window.file_manager.SetPosition(file_manager_position)
+            window.file_manager.Show()
 
     except Exception as e:
         import traceback

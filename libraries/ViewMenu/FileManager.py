@@ -863,8 +863,10 @@ class FileManagerWindow(wx.Frame):
         # Set column sizes and row heights
         for i in range(len(self.core_levels)):
             col_label = self.grid.GetColLabelValue(i + 1)
-            if col_label.startswith(("EDX~", "XAS~", "EELS~", "RAM~")):
+            if col_label.startswith(("EDX~", "XAS~", "EELS~", "RAM~", "zzMap~", "zzPro")):
                 self.grid.SetColSize(i + 1, default_col_width + 20)
+            elif col_label.startswith(("zzMap~", "zzPro")):
+                self.grid.SetColSize(i + 1, default_col_width + 40)
             else:
                 self.grid.SetColSize(i + 1, default_col_width)
 
@@ -2320,13 +2322,10 @@ class FileManagerWindow(wx.Frame):
         col = event.GetCol()
         cell_value = self.grid.GetCellValue(row, col)
 
-        # Process the event to select the cell
         event.Skip()
 
-        # Check if shift or ctrl is being held down
         if not wx.GetKeyState(wx.WXK_SHIFT) and not wx.GetKeyState(wx.WXK_CONTROL):
             if cell_value and cell_value in self.parent.Data['Core levels']:
-                # Check if it's an EDX~Map sheet
                 if cell_value == 'EDX~Map':
                     # Open EDX/SEM window
                     from libraries.ToolsMenu.EDX_SEM_Analysis import open_edx_sem_window
@@ -2335,11 +2334,14 @@ class FileManagerWindow(wx.Frame):
                         hdf5_path = self.parent.current_file_path.replace('_EDX.xlsx', '.hdf5')
                         if not os.path.exists(hdf5_path):
                             hdf5_path = self.parent.current_file_path.replace('_EDX.xlsx', '.h5')
-
                         if os.path.exists(hdf5_path):
                             edx_window = open_edx_sem_window(self.parent)
                             if edx_window:
                                 edx_window.load_file(hdf5_path, 'EDX Map')
+                elif cell_value.startswith('zzMap~'):
+                    # Open Scienta Map Viewer for zzMap~ sheets
+                    from libraries.ViewMenu.ScientaMapViewer import open_scienta_map_viewer
+                    open_scienta_map_viewer(self.parent, cell_value)
                 else:
                     wx.CallAfter(self.quick_plot_sheet, cell_value)
 

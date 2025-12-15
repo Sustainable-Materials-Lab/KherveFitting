@@ -486,7 +486,7 @@ class KeyEventHandlers:
         sheet_name = self.main_frame.sheet_combobox.GetValue()
 
         # Handle EDX sheets - adjust X max
-        if sheet_name == 'EDX~Plot':
+        if sheet_name == 'EDX~Plot' or sheet_name.startswith('EDX~'):
             if 'Core levels' in self.main_frame.Data and sheet_name in self.main_frame.Data['Core levels']:
                 sheet_data = self.main_frame.Data['Core levels'][sheet_name]
 
@@ -505,7 +505,7 @@ class KeyEventHandlers:
 
                 self.main_frame.ax.set_xlim(x_min, new_x_max)
                 self.main_frame.canvas.draw()
-            return
+            return  # Always return for EDX sheets, even if data not found
 
         limits = self.main_frame.plot_config.get_plot_limits(self.main_frame, sheet_name)
         move_factor = 0.1

@@ -14,6 +14,10 @@ from matplotlib.widgets import RectangleSelector
 import matplotlib.patches as patches
 import matplotlib.patheffects as path_effects
 
+# Fix HyperSpy extension loading in frozen environment
+import sys
+if getattr(sys, 'frozen', False):
+    os.environ['HYPERSPY_EXTENSIONS_DISABLED'] = '1'
 
 class EELSWindow(wx.Frame):
     """Main window for EELS data analysis"""
