@@ -1,7 +1,7 @@
 """
 EELS_Analysis.py
 Module for Electron Energy Loss Spectroscopy (EELS) data analysis
-Uses HyperSpy library for .dm3 file import and analysis
+Uses standalone EELS_Utilities for data import and analysis (no HyperSpy dependency)
 Follows same structure as EDX_SEM_Analysis.py but without peak labelling/quantification
 """
 
@@ -14,10 +14,18 @@ from matplotlib.widgets import RectangleSelector
 import matplotlib.patches as patches
 import matplotlib.patheffects as path_effects
 
-# Fix HyperSpy extension loading in frozen environment
-import sys
-if getattr(sys, 'frozen', False):
-    os.environ['HYPERSPY_EXTENSIONS_DISABLED'] = '1'
+# EELS Utilities - standalone replacements for HyperSpy
+try:
+    from libraries.EELS_Utilities import (
+        Signal1D,
+        load_eels,
+        load_hdf5_eels,
+        create_eels_signal
+    )
+    EELS_UTILITIES_AVAILABLE = True
+except ImportError:
+    EELS_UTILITIES_AVAILABLE = False
+    Signal1D = None
 
 class EELSWindow(wx.Frame):
     """Main window for EELS data analysis"""
@@ -623,57 +631,67 @@ class EELSWindow(wx.Frame):
             return
 
         if self.selection_mode == 'point':
+            # Clear previous markers and preview
             self.clear_selection_markers()
             self._clear_point_preview()
 
+            # Store point info with size
             self.selected_points = [(x, y, self.point_size)]
 
             if self.point_size == 1:
-                marker, = self.map_ax.plot(x, y, 'g+', markersize=15,
-                                           markeredgewidth=2)
+                # Single pixel - show as cross (RED)
+                marker, = self.map_ax.plot(x, y, 'r+', markersize=15, markeredgewidth=2)
                 marker._is_selection_marker = True
             else:
+                # Show rectangle for multi-pixel selection (RED)
+                from matplotlib.patches import Rectangle
                 half_size = self.point_size / 2
-                rect = patches.Rectangle((x - half_size, y - half_size),
-                                          self.point_size, self.point_size,
-                                          linewidth=2, edgecolor='lime',
-                                          facecolor='green', alpha=0.3)
+                rect = Rectangle((x - half_size, y - half_size), self.point_size, self.point_size,
+                                 linewidth=2, edgecolor='darkred', facecolor='red', alpha=0.3)
                 rect._is_selection_marker = True
                 self.map_ax.add_patch(rect)
 
             self.map_canvas.draw()
+
+            # Extract and plot spectrum
             self.plot_point_spectrum(x, y)
 
         elif self.selection_mode == 'line':
             if self.line_start is None:
+                # First click - start of line
+                # Clear any previous line markers first (for starting a new line)
                 self.clear_selection_markers()
                 self._clear_line_preview()
 
                 self.line_start = (x, y)
-                marker, = self.map_ax.plot(x, y, 'go', markersize=8,
-                                           markeredgecolor='darkgreen',
-                                           markeredgewidth=2)
+                # Draw start marker (RED)
+                marker, = self.map_ax.plot(x, y, 'ro', markersize=8, markeredgecolor='darkred', markeredgewidth=2)
                 marker._is_selection_marker = True
                 self.map_canvas.draw()
             else:
+                # Second click - end of line
                 self.line_end = (x, y)
+
+                # Clear preview line
                 self._clear_line_preview()
+
+                # Clear previous markers and redraw final line (RED)
                 self.clear_selection_markers()
 
+                # Draw center line (solid, RED)
                 line, = self.map_ax.plot([self.line_start[0], self.line_end[0]],
                                          [self.line_start[1], self.line_end[1]],
-                                         'g-', linewidth=2)
+                                         'r-', linewidth=2)
                 line._is_selection_marker = True
 
+                # Draw end points (RED)
                 marker1, = self.map_ax.plot(self.line_start[0], self.line_start[1],
-                                            'go', markersize=8,
-                                            markeredgecolor='darkgreen',
-                                            markeredgewidth=2)
+                                            'ro', markersize=8,
+                                            markeredgecolor='darkred', markeredgewidth=2)
                 marker1._is_selection_marker = True
                 marker2, = self.map_ax.plot(self.line_end[0], self.line_end[1],
-                                            'go', markersize=8,
-                                            markeredgecolor='darkgreen',
-                                            markeredgewidth=2)
+                                            'ro', markersize=8,
+                                            markeredgecolor='darkred', markeredgewidth=2)
                 marker2._is_selection_marker = True
 
                 self.map_canvas.draw()
@@ -681,6 +699,7 @@ class EELSWindow(wx.Frame):
                 self.plot_line_spectrum(self.line_start[0], self.line_start[1],
                                         self.line_end[0], self.line_end[1])
 
+                # Reset for next line
                 self.line_start = None
                 self.line_end = None
 
@@ -695,10 +714,11 @@ class EELSWindow(wx.Frame):
 
         x, y = int(event.xdata), int(event.ydata)
 
+        # Update line preview (RED)
         self._clear_line_preview()
         self._line_preview, = self.map_ax.plot([self.line_start[0], x],
                                                [self.line_start[1], y],
-                                               'g--', linewidth=1.5, alpha=0.7)
+                                               'r--', linewidth=1.5, alpha=0.7)
         self._line_preview._is_selection_marker = True
         self.map_canvas.draw_idle()
 
@@ -732,6 +752,15 @@ class EELSWindow(wx.Frame):
         y_min, y_max = min(y1, y2), max(y1, y2)
 
         self.selected_areas.append((x_min, y_min, x_max, y_max))
+
+        # Draw rectangle selection marker (RED)
+        self.clear_selection_markers()
+        rect = patches.Rectangle((x_min, y_min), x_max - x_min, y_max - y_min,
+                                 linewidth=2, edgecolor='red', facecolor='red', alpha=0.2)
+        rect._is_selection_marker = True
+        self.map_ax.add_patch(rect)
+        self.map_canvas.draw()
+
         self.plot_area_spectrum(x_min, y_min, x_max, y_max)
 
     # ==================== SPECTRUM PLOTTING ====================
@@ -938,29 +967,27 @@ class EELSWindow(wx.Frame):
                     self.create_eels_map_output(file_path)
 
     def load_file(self, file_path):
-        """Load EELS file using HyperSpy"""
+        """Load EELS file using standalone readers (no HyperSpy)"""
         try:
-            import hyperspy.api as hs
+            if not EELS_UTILITIES_AVAILABLE:
+                wx.MessageBox("EELS_Utilities not available. Cannot load EELS data.",
+                              "Error", wx.OK | wx.ICON_ERROR)
+                return
 
             loaded_data = None
+            ext = os.path.splitext(file_path)[1].lower()
 
-            # Try different readers
-            readers_to_try = ['HSPY', 'Delmic', None]
-
-            for reader in readers_to_try:
+            # Try standalone readers
+            if ext in ['.dm3', '.dm4', '.hdf5', '.h5', '.hspy']:
                 try:
-                    if reader:
-                        loaded_data = hs.load(file_path, reader=reader)
-                    else:
-                        loaded_data = hs.load(file_path)
-                    print(f"Successfully loaded with {reader or 'default'} reader")
-                    break
+                    loaded_data = load_eels(file_path)
+                    print(f"Successfully loaded {ext} file with EELS_Utilities")
                 except Exception as e:
-                    print(f"Failed with {reader or 'default'} reader: {e}")
-                    continue
+                    print(f"EELS_Utilities failed: {e}")
+                    loaded_data = None
 
             if loaded_data is None:
-                wx.MessageBox(f"Could not load file with any available reader.",
+                wx.MessageBox(f"Could not load file. Supported formats: DM3, DM4, HDF5",
                               "Load Error", wx.OK | wx.ICON_ERROR)
                 return
 
@@ -1153,12 +1180,22 @@ class EELSWindow(wx.Frame):
         data = self.current_data.data
         cmap = self.current_cmap
 
+        # Debug: Print data info
+        print(f"EELS data shape: {data.shape}")
+        if hasattr(self.current_data, 'axes_manager'):
+            print(f"Number of navigation axes: {len(self.current_data.axes_manager.navigation_axes)}")
+            print(f"Number of signal axes: {len(self.current_data.axes_manager.signal_axes)}")
+            for i, ax in enumerate(self.current_data.axes_manager._axes):
+                print(f"  Axis {i}: {ax.name}, scale={ax.scale:.4f} {ax.units}, size={ax.size}")
+
         if len(data.shape) == 2:
             sum_image = data
             title = 'EELS Image'
         elif len(data.shape) == 3:
+            # Sum across energy axis (last axis) to get intensity map
             sum_image = np.sum(data, axis=2)
-            title = f'Sum Image ({data.shape[0]}×{data.shape[1]} px, {data.shape[2]} ch)'
+            title = f'EELS Intensity Map ({data.shape[0]}×{data.shape[1]} px, {data.shape[2]} ch)'
+            print(f"Sum image shape: {sum_image.shape}, min={np.min(sum_image):.2f}, max={np.max(sum_image):.2f}")
         elif len(data.shape) == 4:
             sum_image = np.sum(data, axis=(2, 3))
             title = f'Sum Image (4D: {data.shape})'
@@ -1209,12 +1246,15 @@ class EELSWindow(wx.Frame):
 
         if hasattr(self.current_data, 'axes_manager'):
             nav_axes = self.current_data.axes_manager.navigation_axes
+            print(f"Navigation axes available: {len(nav_axes)}")
             if nav_axes:
                 axis = nav_axes[0]
                 scale_value = axis.scale
                 units = axis.units if axis.units else 'px'
+                print(f"Scale bar: scale_value={scale_value} {units}")
 
-        if scale_value is None:
+        if scale_value is None or scale_value <= 0:
+            print("No valid scale information available for scale bar")
             return
 
         # Get current view limits
@@ -1233,6 +1273,8 @@ class EELSWindow(wx.Frame):
         nice_values = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
         scale_bar_physical = min(nice_values, key=lambda x: abs(x - target_physical))
         scale_bar_pixels = scale_bar_physical / scale_value
+
+        print(f"Scale bar: {scale_bar_physical} {units} = {scale_bar_pixels:.1f} pixels")
 
         # Position in lower right
         margin_x = view_width * 0.05

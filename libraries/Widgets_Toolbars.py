@@ -2541,229 +2541,6 @@ def open_pca_window(window):
     pca_window = PCAnalysisWindow(window)
     pca_window.Show()
 
-
-def import_edx_map_file_OLD(window):
-    """Import EDX map file and open EDX/SEM analysis window"""
-    import numpy as np
-    import openpyxl
-    from openpyxl.drawing.image import Image as OpenpyxlImage
-    from io import BytesIO
-    import hyperspy.api as hs
-    import matplotlib.pyplot as plt
-    from libraries.ToolsMenu.EDX_SEM_Analysis import open_edx_sem_window
-    import shutil
-    import json
-
-    wildcard = "HDF5 files (*.hdf5;*.h5)|*.hdf5;*.h5|All files (*.*)|*.*"
-
-    with wx.FileDialog(window, "Open EDX Map file",
-                       wildcard=wildcard,
-                       style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dlg:
-        if dlg.ShowModal() != wx.ID_OK:
-            return
-
-        file_path = dlg.GetPath()
-
-    try:
-        # Initialize window.Data if needed
-        if not hasattr(window, 'Data'):
-            from libraries.ConfigFile import Init_Measurement_Data
-            window.Data = Init_Measurement_Data(window)
-
-        if 'Core levels' not in window.Data:
-            window.Data['Core levels'] = {}
-
-        # Load data with HyperSpy - try different readers automatically
-        loaded_data = None
-        readers_to_try = ['HSPY', 'USID', 'Delmic']
-
-        for reader in readers_to_try:
-            try:
-                loaded_data = hs.load(file_path, reader=reader)
-                print(f"Successfully loaded with {reader} reader")
-                break
-            except Exception as e:
-                print(f"Failed with {reader} reader: {e}")
-                continue
-
-        if loaded_data is None:
-            # Try without specifying reader as last resort
-            try:
-                loaded_data = hs.load(file_path)
-            except:
-                wx.MessageBox("Could not load file with any available reader.",
-                              "Error", wx.OK | wx.ICON_ERROR)
-                return
-
-        if isinstance(loaded_data, list):
-            if len(loaded_data) == 1:
-                loaded_data = loaded_data[0]
-            else:
-                wx.MessageBox("Multiple signals detected. Using first signal.",
-                              "Info", wx.OK | wx.ICON_INFORMATION)
-                loaded_data = loaded_data[0]
-
-        # Create file paths
-        base_name = os.path.splitext(os.path.basename(file_path))[0]
-        excel_path = os.path.join(os.path.dirname(file_path), f"{base_name}_EDX.xlsx")
-        json_path = os.path.join(os.path.dirname(file_path), f"{base_name}_EDX.json")
-        hdf5_copy_path = os.path.join(os.path.dirname(file_path), f"{base_name}_EDX.hdf5")
-
-        # SET FILEPATH EARLY
-        window.Data['FilePath'] = excel_path
-        window.current_file_path = excel_path
-
-        # Update Working_directory
-        if hasattr(window, 'Working_directory'):
-            window.Working_directory = os.path.dirname(excel_path)
-
-        # Copy HDF5 file
-        if file_path.lower().endswith(('.hdf5', '.h5')):
-            shutil.copy2(file_path, hdf5_copy_path)
-            print(f"HDF5 copy saved to: {hdf5_copy_path}")
-
-        # Create workbook
-        wb = openpyxl.Workbook()
-        wb.remove(wb.active)
-
-        # Get energy axis
-        energy_axis = None
-        if hasattr(loaded_data, 'axes_manager') and len(loaded_data.axes_manager.signal_axes) > 0:
-            energy_axis = loaded_data.axes_manager.signal_axes[0].axis
-
-        if energy_axis is not None:
-            energy_min = f"{np.min(energy_axis):.2f}"
-            energy_max = f"{np.max(energy_axis):.2f}"
-            energy_range = f"{energy_min} - {energy_max} keV"
-        else:
-            energy_range = "N/A"
-
-        # EDX~Plot sheet
-        sum_signal = loaded_data.sum()
-        spectrum_data = sum_signal.data
-
-        ws_plot = wb.create_sheet("EDX~Plot")
-        ws_plot.append(['Energy (keV)', 'Intensity', f'Range: {energy_range}'])
-
-        for i, intensity in enumerate(spectrum_data):
-            if energy_axis is not None:
-                ws_plot.append([f"{energy_axis[i]:.2f}", f"{intensity:.2f}"])
-            else:
-                ws_plot.append([f"{i:.2f}", f"{intensity:.2f}"])
-
-        # EDX~Map sheet
-        ws_map = wb.create_sheet("EDX~Map")
-        map_data = np.sum(loaded_data.data, axis=2)
-
-        ws_map.append([f'EDX Intensity Map - Range: {energy_range}'])
-        ws_map.append([''] * (map_data.shape[1] + 1))
-
-        for row in map_data:
-            ws_map.append([f"{val:.2f}" for val in row])
-
-        # Create map image
-        fig, ax = plt.subplots(figsize=(map_data.shape[1] / 100, map_data.shape[0] / 100), dpi=100)
-        im = ax.imshow(map_data, cmap='plasma')
-        ax.set_title(f'EDX Map - {energy_range}')
-        plt.colorbar(im, ax=ax)
-        ax.axis('off')
-
-        img_buffer = BytesIO()
-        fig.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
-        img_buffer.seek(0)
-        plt.close(fig)
-
-        img = OpenpyxlImage(img_buffer)
-        ws_map.add_image(img, f'A{map_data.shape[0] + 5}')
-
-        # Save Excel
-        wb.save(excel_path)
-        print(f"EDX data exported to: {excel_path}")
-
-        # ========== Add to window.Data - USE SAME STRUCTURE AS XPS ==========
-        energy_values = energy_axis if energy_axis is not None else np.arange(len(spectrum_data))
-
-        # Add EDX~Plot sheet - SAME STRUCTURE AS XPS
-        window.Data['Core levels']['EDX~Plot'] = {
-            'Name': 'EDX~Plot',
-            'B.E.': list(energy_values),
-            'Raw Data': list(spectrum_data),
-            '_EDX_display_max': 20,
-            '_EDX_type': 'plot',
-            'Background': {}
-        }
-
-        # Add EDX~Map sheet
-        window.Data['Core levels']['EDX~Map'] = {
-            'Name': 'EDX~Map',
-            'Map_Intensity': map_data.tolist(),
-            'Map_Shape': list(map_data.shape),
-            'Energy_Range': energy_range,
-            '_EDX_type': 'map',
-            '_HDF5_Path': hdf5_copy_path if os.path.exists(hdf5_copy_path) else file_path
-        }
-
-        # ========== Create JSON file ==========
-        json_data = {
-            'FilePath': excel_path,
-            'Core levels': {}
-        }
-
-        json_data['Core levels']['EDX~Plot'] = {
-            'Name': 'EDX~Plot',
-            'B.E.': [float(f"{v:.2f}") for v in energy_values],
-            'Raw Data': [float(f"{v:.2f}") for v in spectrum_data],
-            '_EDX_display_max': 20,
-            '_EDX_type': 'plot'
-        }
-
-        json_data['Core levels']['EDX~Map'] = {
-            'Name': 'EDX~Map',
-            'Map_Intensity': [[float(f"{val:.2f}") for val in row] for row in map_data],
-            'Map_Shape': list(map_data.shape),
-            'Energy_Range': energy_range,
-            '_EDX_type': 'map',
-            '_HDF5_Path': hdf5_copy_path if os.path.exists(hdf5_copy_path) else file_path
-        }
-
-        with open(json_path, 'w') as jf:
-            json.dump(json_data, jf, indent=2)
-        print(f"JSON data saved to: {json_path}")
-
-        # Update status bar
-        if hasattr(window, 'SetStatusText'):
-            window.SetStatusText(f"Working Directory: {os.path.dirname(excel_path)}", 0)
-
-        # Update window title
-        if hasattr(window, 'SetTitle'):
-            window.SetTitle(f"KherveFitting - {os.path.basename(excel_path)}")
-
-        # Update sheet selector
-        window.sheet_combobox.Append('EDX~Plot')
-        window.sheet_combobox.Append('EDX~Map')
-        window.sheet_combobox.SetValue('EDX~Plot')
-
-        # Update file location at bottom
-        if hasattr(window, 'file_path_text'):
-            window.file_path_text.SetLabel(f"File: {excel_path}")
-
-        # Open EDX/SEM analysis window
-        edx_window = open_edx_sem_window(window)
-        if edx_window:
-            window.edx_window = edx_window
-            edx_window.load_file(file_path, 'EDX Map')
-
-        # wx.MessageBox(f"EDX data imported successfully!\n\nExcel: {excel_path}\nJSON: {json_path}\n" +
-        #               (f"HDF5: {hdf5_copy_path}" if os.path.exists(hdf5_copy_path) else ""),
-        #               "Import Complete", wx.OK | wx.ICON_INFORMATION)
-
-    except Exception as e:
-        wx.MessageBox(f"Error importing EDX map:\n{str(e)}",
-                      "Error", wx.OK | wx.ICON_ERROR)
-        import traceback
-        traceback.print_exc()
-
-
 def import_edx_map_file(window):
     """Import EDX map file and open EDX/SEM analysis window"""
     import numpy as np
@@ -3131,11 +2908,22 @@ def import_eels_map_file(window):
     import openpyxl
     from openpyxl.drawing.image import Image as OpenpyxlImage
     from io import BytesIO
-    import hyperspy.api as hs
     import matplotlib.pyplot as plt
     from libraries.ToolsMenu.EELS_Analysis import open_eels_window
     import shutil
     import json
+
+    # Try to import EELS utilities
+    try:
+        from libraries.EELS_Utilities import load_eels
+        EELS_UTILITIES_AVAILABLE = True
+    except ImportError:
+        EELS_UTILITIES_AVAILABLE = False
+
+    if not EELS_UTILITIES_AVAILABLE:
+        wx.MessageBox("EELS_Utilities not available. Cannot load EELS data.",
+                      "Error", wx.OK | wx.ICON_ERROR)
+        return
 
     wildcard = "DM3 files (*.dm3)|*.dm3|DM4 files (*.dm4)|*.dm4|HDF5 files (*.hdf5;*.h5)|*.hdf5;*.h5|All files (*.*)|*.*"
 
@@ -3156,27 +2944,17 @@ def import_eels_map_file(window):
         if 'Core levels' not in window.Data:
             window.Data['Core levels'] = {}
 
-        # Load data with HyperSpy - try different readers automatically
+        # Load data with EELS_Utilities (no HyperSpy)
         loaded_data = None
-        readers_to_try = ['HSPY', 'Delmic']
+        ext = os.path.splitext(file_path)[1].lower()
 
-        for reader in readers_to_try:
-            try:
-                loaded_data = hs.load(file_path, reader=reader)
-                print(f"Successfully loaded with {reader} reader")
-                break
-            except Exception as e:
-                print(f"Failed with {reader} reader: {e}")
-                continue
-
-        if loaded_data is None:
-            # Try without specifying reader as last resort
-            try:
-                loaded_data = hs.load(file_path)
-            except:
-                wx.MessageBox("Could not load file with any available reader.",
-                              "Error", wx.OK | wx.ICON_ERROR)
-                return
+        try:
+            loaded_data = load_eels(file_path)
+            print(f"Successfully loaded {ext} file with EELS_Utilities")
+        except Exception as e:
+            wx.MessageBox(f"Could not load file: {str(e)}",
+                          "Error", wx.OK | wx.ICON_ERROR)
+            return
 
         if isinstance(loaded_data, list):
             if len(loaded_data) == 1:
@@ -3269,8 +3047,8 @@ def import_eels_map_file(window):
         # Add EELS~Plot sheet - SAME STRUCTURE AS XPS
         window.Data['Core levels']['EELS~Plot'] = {
             'Name': 'EELS~Plot',
-            'B.E.': list(energy_values),
-            'Raw Data': list(spectrum_data),
+            'B.E.': [float(f"{v:.2f}") for v in energy_values],
+            'Raw Data': [float(f"{v:.2f}") for v in spectrum_data],
             '_EELS_type': 'plot',
             'Background': {}
         }
