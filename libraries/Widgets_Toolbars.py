@@ -2071,7 +2071,7 @@ def create_vertical_toolbar(parent, frame):
     return v_toolbar
 
 
-def create_examples_menu(window):
+def create_examples_menu_OLD(window):
     """Create dynamic examples menu from Open Examples folder structure"""
     examples_menu = wx.Menu()
 
@@ -2143,6 +2143,112 @@ def create_examples_menu(window):
         error_item.Enable(False)
 
     return examples_menu
+
+
+def create_examples_menu(window):
+    """Create dynamic examples menu from Open Examples folder structure"""
+    examples_menu = wx.Menu()
+
+    # Get the path to Data-Examples folder (same level as executable)
+    import sys
+    import platform
+
+    if getattr(sys, 'frozen', False):
+        # Running as executable
+        if platform.system() == 'Darwin':
+            # Mac: .app bundle - go up to parent directory where Data-Examples is
+            # sys.executable is at KherveFitting.app/Contents/MacOS/KherveFitting
+            # We need to go to the directory containing KherveFitting.app
+            executable_dir = os.path.dirname(os.path.dirname(os.path.dirname(sys.executable)))
+        else:
+            # Windows: executable is in same directory as Data-Examples
+            executable_dir = os.path.dirname(sys.executable)
+    else:
+        # Running from source
+        executable_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    examples_path = os.path.join(executable_dir, "Data-Examples")
+
+    if not os.path.exists(examples_path):
+        no_examples_item = examples_menu.Append(wx.NewId(), "No Examples Folder Found")
+        no_examples_item.Enable(False)
+        return examples_menu
+
+    def add_files_to_menu(menu, directory):
+        """Recursively add files and subdirectories to menu"""
+        try:
+            items = sorted(os.listdir(directory))
+
+            # Separate files and directories
+            files = []
+            subdirs = []
+
+            for item in items:
+                item_path = os.path.join(directory, item)
+                if os.path.isfile(item_path):
+                    if item.lower().endswith(('.xlsx', '.vgd')):
+                        files.append(item)
+                elif os.path.isdir(item_path):
+                    subdirs.append(item)
+
+            # Add files first
+            for file_name in files:
+                file_path = os.path.join(directory, file_name)
+                display_name = os.path.splitext(file_name)[0]
+
+                menu_item = menu.Append(wx.NewId(), display_name)
+                window.Bind(wx.EVT_MENU,
+                            lambda event, path=file_path: open_example_file(window, path),
+                            menu_item)
+
+            # Then add subdirectories
+            for subdir_name in subdirs:
+                subdir_path = os.path.join(directory, subdir_name)
+                subdir_menu = wx.Menu()
+
+                add_files_to_menu(subdir_menu, subdir_path)
+
+                # Only add submenu if it has items
+                if subdir_menu.GetMenuItemCount() > 0:
+                    menu.AppendSubMenu(subdir_menu, subdir_name)
+
+        except Exception as e:
+            error_item = menu.Append(wx.NewId(), f"Error: {str(e)}")
+            error_item.Enable(False)
+
+    try:
+        # Get all top-level subdirectories in Data-Examples
+        subdirs = [d for d in os.listdir(examples_path)
+                   if os.path.isdir(os.path.join(examples_path, d))]
+        subdirs.sort()
+
+        if not subdirs:
+            no_examples_item = examples_menu.Append(wx.NewId(), "No Example Categories Found")
+            no_examples_item.Enable(False)
+            return examples_menu
+
+        # Create submenu for each subdirectory
+        for subdir in subdirs:
+            subdir_path = os.path.join(examples_path, subdir)
+            subdir_menu = wx.Menu()
+
+            add_files_to_menu(subdir_menu, subdir_path)
+
+            if subdir_menu.GetMenuItemCount() > 0:
+                examples_menu.AppendSubMenu(subdir_menu, subdir)
+            else:
+                # Add disabled item if no valid files found
+                temp_menu = wx.Menu()
+                no_files_item = temp_menu.Append(wx.NewId(), "No xlsx or VGD files found")
+                no_files_item.Enable(False)
+                examples_menu.AppendSubMenu(temp_menu, subdir)
+
+    except Exception as e:
+        error_item = examples_menu.Append(wx.NewId(), f"Error loading examples: {str(e)}")
+        error_item.Enable(False)
+
+    return examples_menu
+
 
 def on_open_edx_sem_OLD(window):
     """Open EDX/SEM analysis window"""
