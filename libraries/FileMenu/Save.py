@@ -1774,10 +1774,62 @@ def save_plot_to_excel(window, update_console=None):
     sheet_name = window.sheet_combobox.GetValue()
     is_survey = "survey" in sheet_name.lower() or "wide" in sheet_name.lower()
     is_raman = sheet_name.startswith('RA') or 'RAMAN' in sheet_name.upper() or "Ra_" in sheet_name
+    is_edx_map = sheet_name == 'EDX~Map'
+    is_edx_plot = sheet_name.startswith('EDX~Plot')
 
     try:
         if update_console:
             update_console(f"Saving plot for sheet: {sheet_name}")
+
+        # Handle EDX~Map - save from EDX window if available
+        if is_edx_map:
+            # print(f"EDX~Map detected, looking for edx_window...")
+            if hasattr(window, 'edx_window') and window.edx_window is not None:
+                print(f"Found edx_window: {window.edx_window}")
+                try:
+                    edx_window = window.edx_window
+                    if hasattr(edx_window, 'map_figure') and edx_window.map_figure is not None:
+                        print(f"Found map_figure, saving...")
+                        buf = io.BytesIO()
+                        edx_window.map_figure.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+                        buf.seek(0)
+
+                        wb = openpyxl.load_workbook(file_path)
+                        if sheet_name in wb.sheetnames:
+                            ws = wb[sheet_name]
+                            # Clear existing images properly
+                            ws._images = []
+                        else:
+                            ws = wb.create_sheet(sheet_name)
+
+                        img = Image(buf)
+                        ws.add_image(img, 'D6')
+                        wb.save(file_path)
+                        # print(f"EDX Map saved to {file_path}")
+
+                        if update_console:
+                            update_console(f"EDX Map image saved to Excel under sheet: {sheet_name}")
+                        # else:
+                        #     window.show_popup_message2("EDX Map saved to Excel", f"Under sheet: {sheet_name}")
+                        return
+                    else:
+                        print("map_figure not found in edx_window")
+                except Exception as e:
+                    print(f"Error saving EDX map from window: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"edx_window not found. hasattr: {hasattr(window, 'edx_window')}")
+
+            # Fallback message if EDX window not available
+            if update_console:
+                update_console("EDX Map window not available - open EDX HeatMap first")
+            else:
+                wx.MessageBox("EDX HeatMap window not available.\nPlease open the EDX HeatMap window first.",
+                              "Info", wx.OK | wx.ICON_INFORMATION)
+            return
+
+        # Get dimensions based on plot type
 
         # Get dimensions based on plot type
         width = window.survey_excel_width if is_survey else window.excel_width
@@ -1820,15 +1872,15 @@ def save_plot_to_excel(window, update_console=None):
         else:
             window.show_popup_message2("Plot saved into Excel file", f"Under sheet: {sheet_name}")
 
-
-        # Set proper axis orientation after saving
-        is_profile = sheet_name.startswith('zzProfile')
-        limits = window.plot_config.get_plot_limits(window, sheet_name)
-        if is_raman or is_profile:
-            window.ax.set_xlim(limits['Xmin'], limits['Xmax'])  # Normal direction for Raman
-        else:
-            window.ax.set_xlim(limits['Xmax'], limits['Xmin'])  # Reverse X-axis for XPS
-        window.canvas.draw_idle()
+        # Set proper axis orientation after saving (skip for EDX sheets)
+        if not is_edx_plot:
+            is_profile = sheet_name.startswith('zzProfile')
+            limits = window.plot_config.get_plot_limits(window, sheet_name)
+            if is_raman or is_profile:
+                window.ax.set_xlim(limits['Xmin'], limits['Xmax'])  # Normal direction for Raman
+            else:
+                window.ax.set_xlim(limits['Xmax'], limits['Xmin'])  # Reverse X-axis for XPS
+            window.canvas.draw_idle()
 
     except Exception as e:
         import traceback
@@ -3241,8 +3293,12 @@ def on_save_as(window, event=None):
         # Get the JSON path for the current file
         current_json_path = os.path.splitext(current_file_path)[0] + '.json'
 
-        # Calculate the new JSON path
+        # Get the HDF5 path for the current file
+        current_hdf5_path = os.path.splitext(current_file_path)[0] + '.hdf5'
+
+        # Calculate the new JSON and HDF5 paths
         new_json_path = os.path.splitext(new_file_path)[0] + '.json'
+        new_hdf5_path = os.path.splitext(new_file_path)[0] + '.hdf5'
 
         try:
             # Save the Excel file
@@ -3271,6 +3327,11 @@ def on_save_as(window, event=None):
 
                 with open(new_json_path, 'w') as f:
                     json.dump(data, f, indent=2)
+
+            # Copy HDF5 file if it exists (for EDX data)
+            if os.path.exists(current_hdf5_path):
+                shutil.copy2(current_hdf5_path, new_hdf5_path)
+                print(f"HDF5 file copied to: {new_hdf5_path}")
 
             # Update the file path in the current window
             window.Data['FilePath'] = new_file_path

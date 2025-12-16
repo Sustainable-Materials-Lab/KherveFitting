@@ -31,6 +31,16 @@ except ImportError:
     EDX_UTILITIES_AVAILABLE = False
     edx_elements = None
 
+def get_hdf5_path_from_filepath(filepath):
+    """
+    Get HDF5 file path from Excel/JSON filepath.
+    HDF5 file is always named same as Excel file but with .hdf5 extension.
+    """
+    if not filepath:
+        return None
+    base_path = os.path.splitext(filepath)[0]
+    hdf5_path = f"{base_path}.hdf5"
+    return hdf5_path if os.path.exists(hdf5_path) else None
 
 
 class EDXSEMWindow(wx.Frame):
@@ -39,7 +49,9 @@ class EDXSEMWindow(wx.Frame):
     def __init__(self, parent, title="EDX HeatMap"):
         super().__init__(parent, title=title, size=(590, 700), style = wx.DEFAULT_FRAME_STYLE | wx.STAY_ON_TOP)
 
-
+        # Store reference in parent for access from other modules
+        if parent is not None:
+            parent.edx_window = self
 
         self.parent = parent
         self.edx_data = None
@@ -54,8 +66,15 @@ class EDXSEMWindow(wx.Frame):
         self.selected_areas = []
         self.selected_lines = []
 
-        self.include_elements = set()   # elements to include (green)
-        self.exclude_elements = set()   # elements to exclude (red)
+        # Default excluded elements (rare, noble gases, radioactive)
+        default_excluded = {'Ra', 'Os', 'Dy', 'Lv', 'Db', 'Rg', 'Ho', 'Ac', 'Sm', 'Og', 'Po',
+                            'Np', 'Nd', 'Hf', 'Rb', 'U', 'Rn', 'Th', 'Am', 'Lr', 'Pm', 'Bh',
+                            'Ne', 'Cf', 'Xe', 'Lu', 'Bk', 'Cm', 'Cn', 'H', 'Ds', 'Eu', 'Pa',
+                            'Sg', 'Fl', 'Tb', 'Es', 'Fr', 'No', 'Mc', 'Nh', 'Md', 'Hs', 'Yb',
+                            'Kr', 'Pu', 'Tm', 'Mt', 'Rf', 'Er', 'At', 'Ts', 'Ar', 'He', 'Fm'}
+
+        self.include_elements = set()  # elements to include (green)
+        self.exclude_elements = default_excluded.copy()  # elements to exclude (red)
         self.selected_elements = []
 
         self.point_size = 1  # Size in pixels (1 = single pixel)
@@ -89,8 +108,8 @@ class EDXSEMWindow(wx.Frame):
         panel = wx.Panel(self, style=wx.BORDER_RAISED)
         main_sizer = wx.BoxSizer(wx.VERTICAL)
 
-        # Create menubar
-        self.create_menubar()
+        # # Create menubar
+        # self.create_menubar()
 
         # Toolbar
         toolbar_panel = self.create_toolbar(panel)
@@ -2289,14 +2308,13 @@ class EDXSEMWindow(wx.Frame):
                     'Background': {}
                 }
 
-                # Add EDX~Map
+                # Add EDX~Map (HDF5 path is derived from FilePath, not stored)
                 self.parent.Data['Core levels']['EDX~Map'] = {
                     'Name': 'EDX~Map',
                     'Map_Intensity': map_data.tolist(),
                     'Map_Shape': list(map_data.shape),
                     'Energy_Range': energy_range,
                     '_EDX_type': 'map',
-                    '_HDF5_Path': hdf5_copy_path if os.path.exists(hdf5_copy_path) else file_path,
                     '_EDX_include_elements': include_elements,
                     '_EDX_exclude_elements': exclude_elements
                 }
@@ -2337,14 +2355,13 @@ class EDXSEMWindow(wx.Frame):
                 '_EDX_exclude_elements': exclude_elements
             }
 
-            # Add EDX~Map to JSON
+            # Add EDX~Map to JSON (HDF5 path is derived from FilePath, not stored)
             json_data['Core levels']['EDX~Map'] = {
                 'Name': 'EDX~Map',
                 'Map_Intensity': [[float(f"{val:.2f}") for val in row] for row in map_data],
                 'Map_Shape': list(map_data.shape),
                 'Energy_Range': energy_range,
                 '_EDX_type': 'map',
-                '_HDF5_Path': hdf5_copy_path if os.path.exists(hdf5_copy_path) else file_path,
                 '_EDX_include_elements': include_elements,
                 '_EDX_exclude_elements': exclude_elements
             }
@@ -2373,22 +2390,30 @@ class EDXSEMWindow(wx.Frame):
                 return
 
             # Check EDX sheets for saved preferences
+            preferences_found = False
             for sheet_name in ['EDX~Plot', 'EDX~Map']:
                 if sheet_name in self.parent.Data['Core levels']:
                     sheet_data = self.parent.Data['Core levels'][sheet_name]
 
-                    if '_EDX_include_elements' in sheet_data:
-                        self.include_elements = set(sheet_data['_EDX_include_elements'])
-                        print(f"Loaded include elements: {self.include_elements}")
+                    if '_EDX_include_elements' in sheet_data or '_EDX_exclude_elements' in sheet_data:
+                        preferences_found = True
 
-                    if '_EDX_exclude_elements' in sheet_data:
-                        self.exclude_elements = set(sheet_data['_EDX_exclude_elements'])
-                        print(f"Loaded exclude elements: {self.exclude_elements}")
+                        if '_EDX_include_elements' in sheet_data:
+                            self.include_elements = set(sheet_data['_EDX_include_elements'])
+                            print(f"Loaded include elements: {self.include_elements}")
 
-                    # Also set legacy selected_elements
-                    self.selected_elements = list(self.include_elements)
+                        if '_EDX_exclude_elements' in sheet_data:
+                            self.exclude_elements = set(sheet_data['_EDX_exclude_elements'])
+                            print(f"Loaded exclude elements: {self.exclude_elements}")
 
-                    break  # Found preferences, stop looking
+                        # Also set legacy selected_elements
+                        self.selected_elements = list(self.include_elements)
+                        break
+
+            # If no saved preferences found, save the defaults to data
+            if not preferences_found:
+                print("No saved element preferences found, using defaults")
+                self._save_element_preferences()
 
         except Exception as e:
             print(f"Could not load element preferences: {e}")
@@ -2651,6 +2676,32 @@ class EDXSEMWindow(wx.Frame):
 
             return signal
 
+    def _convert_bcf_to_signal_OLD(self, bcf_obj):
+        """Convert BCF data to signal-like object"""
+        from libraries.EDX_Utilities import Signal1D
+
+        if hasattr(bcf_obj, 'energy') and bcf_obj.energy is not None:
+            signal = Signal1D(bcf_obj.data)
+
+            # Set up energy axis on the LAST axis
+            if len(bcf_obj.energy) > 1:
+                scale = bcf_obj.energy[1] - bcf_obj.energy[0]
+                offset = bcf_obj.energy[0]
+            else:
+                scale = 0.005
+                offset = 0
+
+            last_axis_idx = len(signal.axes_manager) - 1
+            signal.axes_manager[last_axis_idx].scale = scale
+            signal.axes_manager[last_axis_idx].offset = offset
+            signal.axes_manager[last_axis_idx].units = 'keV'
+            signal.axes_manager[last_axis_idx].name = 'Energy'
+
+            signal.metadata = bcf_obj.metadata
+            return signal
+        else:
+            return Signal1D(bcf_obj.data)
+
     def _convert_bcf_to_signal(self, bcf_obj):
         """Convert BCF data to signal-like object"""
         from libraries.EDX_Utilities import Signal1D
@@ -2671,6 +2722,30 @@ class EDXSEMWindow(wx.Frame):
             signal.axes_manager[last_axis_idx].offset = offset
             signal.axes_manager[last_axis_idx].units = 'keV'
             signal.axes_manager[last_axis_idx].name = 'Energy'
+
+            # Set navigation axes scale from BCF pixel_size (µm -> nm)
+            # BCF pixel_size is in µm, we want nm for display
+            if signal.data.ndim == 3:  # 3D hyperspectral data
+                nav_axes = signal.axes_manager.navigation_axes
+                # Get pixel sizes from BCF (default 1.0 µm)
+                pixel_size_x = getattr(bcf_obj, 'pixel_size_x', 1.0)
+                pixel_size_y = getattr(bcf_obj, 'pixel_size_y', 1.0)
+
+                # Convert µm to nm (1 µm = 1000 nm)
+                scale_nm_x = pixel_size_x * 1000.0
+                scale_nm_y = pixel_size_y * 1000.0
+
+                if len(nav_axes) >= 2:
+                    nav_axes[0].scale = scale_nm_y  # Y axis (first nav axis)
+                    nav_axes[0].units = 'nm'
+                    nav_axes[0].name = 'Y'
+                    nav_axes[1].scale = scale_nm_x  # X axis (second nav axis)
+                    nav_axes[1].units = 'nm'
+                    nav_axes[1].name = 'X'
+                elif len(nav_axes) == 1:
+                    nav_axes[0].scale = scale_nm_x
+                    nav_axes[0].units = 'nm'
+                    nav_axes[0].name = 'X'
 
             signal.metadata = bcf_obj.metadata
             return signal
@@ -5368,6 +5443,138 @@ class EDXSEMWindow(wx.Frame):
             traceback.print_exc()
             return []
 
+    def _calculate_quantification(self, energy, spectrum, elements):
+        """Calculate quantification using EDX_Utilities (no exspy/hyperspy).
+
+        Args:
+            energy: Energy axis array (keV)
+            spectrum: Spectrum intensity array
+            elements: List of element symbols to quantify
+
+        Returns:
+            List of dicts with element, line, energy, height, area, concentration, atomic_percent
+        """
+        try:
+            from libraries.EDX_Utilities import (
+                elements as edx_elements,
+                get_element_xray_lines,
+                DEFAULT_KFACTORS
+            )
+
+            results = []
+            intensities = []
+            kfactors = []
+
+            for element in elements:
+                try:
+                    if element not in edx_elements:
+                        continue
+
+                    # Get X-ray line energies for this element using helper function
+                    xray_lines = get_element_xray_lines(element)
+
+                    if not xray_lines:
+                        continue
+
+                    # Find the best line (Ka preferred, then La, Ma)
+                    best_line = None
+                    best_energy_val = None
+
+                    for line_type in ['Ka', 'La', 'Ma']:
+                        if line_type in xray_lines and xray_lines[line_type] is not None:
+                            best_line = line_type
+                            best_energy_val = xray_lines[line_type]
+                            break
+
+                    if best_energy_val is None:
+                        continue
+
+                    # Find peak in spectrum near this energy
+                    idx = np.argmin(np.abs(energy - best_energy_val))
+
+                    # Define integration window (±0.15 keV typical for EDX)
+                    energy_window = 0.15  # keV
+                    mask = (energy >= best_energy_val - energy_window) & (energy <= best_energy_val + energy_window)
+
+                    if not np.any(mask):
+                        continue
+
+                    # Extract peak region
+                    peak_energy = energy[mask]
+                    peak_spectrum = spectrum[mask]
+
+                    if len(peak_spectrum) == 0:
+                        continue
+
+                    # Calculate peak parameters
+                    peak_height = float(np.max(peak_spectrum))
+
+                    # Estimate background as minimum in the window
+                    background = float(np.min(peak_spectrum))
+
+                    # Net peak height
+                    net_height = peak_height - background
+
+                    # Estimate FWHM from the peak shape
+                    half_max = background + net_height / 2
+                    above_half = peak_spectrum >= half_max
+                    if np.any(above_half):
+                        indices = np.where(above_half)[0]
+                        if len(indices) > 1:
+                            fwhm_kev = peak_energy[indices[-1]] - peak_energy[indices[0]]
+                        else:
+                            fwhm_kev = 0.1  # Default 100 eV
+                    else:
+                        fwhm_kev = 0.1
+
+                    # Calculate area using Gaussian approximation
+                    peak_area = net_height * (fwhm_kev * 1000) * 1.064
+
+                    # Get k-factor
+                    kfactor_key = f"{element}_{best_line}"
+                    kfactor = DEFAULT_KFACTORS.get(kfactor_key, 1.0)
+
+                    results.append({
+                        'element': element,
+                        'line': best_line,
+                        'energy': best_energy_val,
+                        'height': net_height,
+                        'area': peak_area,
+                        'fwhm': fwhm_kev * 1000,  # Store in eV
+                        'kfactor': kfactor
+                    })
+                    intensities.append(peak_area)
+                    kfactors.append(kfactor)
+
+                except Exception as e:
+                    print(f"Could not process element {element}: {e}")
+                    continue
+
+            # Calculate atomic percentages using Cliff-Lorimer
+            if len(intensities) > 0:
+                intensities_arr = np.array(intensities)
+                kfactors_arr = np.array(kfactors)
+
+                corrected = intensities_arr / kfactors_arr
+                total = np.sum(corrected)
+
+                if total > 0:
+                    for i, res in enumerate(results):
+                        at_percent = (corrected[i] / total) * 100
+                        res['concentration'] = at_percent
+                        res['atomic_percent'] = at_percent
+                        res['at_percent'] = at_percent
+                        res['At%'] = at_percent
+
+            return results
+
+        except Exception as e:
+            print(f"Quantification error: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+
     def _calculate_quantification_from_identified(self, energy, spectrum, element_peaks):
         """
         Calculate quantification using the peaks that were identified during labeling.
@@ -5987,8 +6194,35 @@ class InfoWindow(wx.Frame):
             info.append("Axes:")
             for axis in signal.axes_manager.signal_axes:
                 info.append(f"  {axis.name}: {axis.size} pts, {axis.scale:.4f} {axis.units}/pt")
+
+            # Navigation axes with size calculation
             for axis in signal.axes_manager.navigation_axes:
-                info.append(f"  {axis.name}: {axis.size} pts, {axis.scale:.4f} {axis.units}/pt")
+                scale_str = f"{axis.scale:.2f}" if axis.scale >= 0.01 else f"{axis.scale:.4f}"
+                info.append(f"  {axis.name}: {axis.size} pts, {scale_str} {axis.units}/pixel")
+                # Show total dimension
+                total_size = axis.size * axis.scale
+                if axis.units == 'nm':
+                    if total_size >= 1000:
+                        info.append(f"    Total: {total_size / 1000:.2f} µm")
+                    else:
+                        info.append(f"    Total: {total_size:.2f} nm")
+                elif axis.units:
+                    info.append(f"    Total: {total_size:.2f} {axis.units}")
+
+            # Summary for map data
+            if signal.data.ndim == 3:
+                nav_axes = signal.axes_manager.navigation_axes
+                if len(nav_axes) >= 2:
+                    info.append("")
+                    info.append("Map dimensions:")
+                    x_total = nav_axes[1].size * nav_axes[1].scale if len(nav_axes) > 1 else 0
+                    y_total = nav_axes[0].size * nav_axes[0].scale
+                    units = nav_axes[0].units if nav_axes[0].units else 'pixels'
+                    if units == 'nm' and x_total >= 1000:
+                        info.append(f"  {x_total / 1000:.2f} × {y_total / 1000:.2f} µm")
+                    else:
+                        info.append(f"  {x_total:.2f} × {y_total:.2f} {units}")
+                    info.append(f"  ({nav_axes[1].size if len(nav_axes) > 1 else 1} × {nav_axes[0].size} pixels)")
 
         self.info_text.SetValue('\n'.join(info))
 

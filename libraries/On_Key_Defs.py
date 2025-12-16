@@ -563,18 +563,22 @@ class KeyEventHandlers:
 
         # Check if current sheet is EDX first
         current_sheet = self.main_frame.sheet_combobox.GetValue()
-        if current_sheet == 'EDX~Plot':
-            # Handle EDX Y-axis intensity adjustment (like XPS)
+        if current_sheet.startswith('EDX~'):
+            # Handle EDX Y-axis intensity adjustment - Ymin always 0 for EDX
             if 'Core levels' in self.main_frame.Data and current_sheet in self.main_frame.Data['Core levels']:
                 sheet_data = self.main_frame.Data['Core levels'][current_sheet]
 
-                if 'Intensity' in sheet_data:
+                # EDX uses 'Raw Data' instead of 'Intensity'
+                intensity_key = 'Raw Data' if 'Raw Data' in sheet_data else 'Intensity'
+
+                if intensity_key in sheet_data:
                     import numpy as np
-                    intensity = np.array(sheet_data['Intensity'])
+                    intensity = np.array(sheet_data[intensity_key])
                     max_intensity = np.max(intensity)
 
-                    # Get current Y limits
-                    ymin, ymax = self.main_frame.ax.get_ylim()
+                    # EDX always uses Ymin = 0
+                    ymin = 0.00
+                    _, ymax = self.main_frame.ax.get_ylim()
                     intensity_factor = 0.05
 
                     if keycode == wx.WXK_DOWN:
@@ -644,24 +648,37 @@ class KeyEventHandlers:
             # Only update plot display, don't save to window.data for multiple plots
             self.main_frame.ax.set_ylim(ymin, new_ymax)
             limits = {'Ymin': ymin, 'Ymax': new_ymax}  # For RSD calculation below
-
         else:
             # Single plot mode: use existing behavior and SAVE to window.data
             sheet_name = self.main_frame.sheet_combobox.GetValue()
-            limits = self.main_frame.plot_config.get_plot_limits(self.main_frame, sheet_name)
-            intensity_factor = 0.05
-            max_intensity = max(self.main_frame.y_values)
 
-            if keycode == wx.WXK_DOWN:  # Decrease intensity
-                limits['Ymax'] = max(limits['Ymax'] - intensity_factor * max_intensity, limits['Ymin'])
-            else:  # Increase intensity
-                limits['Ymax'] += intensity_factor * max_intensity
+            # EDX sheets always use Ymin = 0
+            if sheet_name.startswith('EDX~'):
+                limits = self.main_frame.plot_config.get_plot_limits(self.main_frame, sheet_name)
+                limits['Ymin'] = 0.00
+                intensity_factor = 0.05
+                max_intensity = max(self.main_frame.y_values)
 
-            # Update and save the plot limits to window.data
-            self.main_frame.plot_config.update_plot_limits(self.main_frame, sheet_name, y_max=limits['Ymax'])
+                if keycode == wx.WXK_DOWN:
+                    limits['Ymax'] = max(limits['Ymax'] - intensity_factor * max_intensity, limits['Ymin'])
+                else:
+                    limits['Ymax'] += intensity_factor * max_intensity
 
-            # Update the plot display
-            self.main_frame.ax.set_ylim(limits['Ymin'], limits['Ymax'])
+                self.main_frame.plot_config.update_plot_limits(self.main_frame, sheet_name, y_max=limits['Ymax'])
+                self.main_frame.ax.set_ylim(limits['Ymin'], limits['Ymax'])
+            else:
+                # Non-EDX sheets: normal behavior
+                limits = self.main_frame.plot_config.get_plot_limits(self.main_frame, sheet_name)
+                intensity_factor = 0.05
+                max_intensity = max(self.main_frame.y_values)
+
+                if keycode == wx.WXK_DOWN:
+                    limits['Ymax'] = max(limits['Ymax'] - intensity_factor * max_intensity, limits['Ymin'])
+                else:
+                    limits['Ymax'] += intensity_factor * max_intensity
+
+                self.main_frame.plot_config.update_plot_limits(self.main_frame, sheet_name, y_max=limits['Ymax'])
+                self.main_frame.ax.set_ylim(limits['Ymin'], limits['Ymax'])
 
         # Check RSD visibility (common for both modes)
         if hasattr(self.main_frame.plot_manager,

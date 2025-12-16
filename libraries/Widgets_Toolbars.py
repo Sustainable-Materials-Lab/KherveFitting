@@ -2277,7 +2277,10 @@ def on_open_edx_sem(window):
 
         # Try to find and load the HDF5 file
         edx_map_data = window.Data['Core levels']['EDX~Map']
-        hdf5_path = edx_map_data.get('_HDF5_Path')
+
+        # HDF5 path is derived from FilePath
+        from libraries.ToolsMenu.EDX_SEM_Analysis import get_hdf5_path_from_filepath
+        hdf5_path = get_hdf5_path_from_filepath(self.window.Data.get('FilePath'))
 
         # Try multiple path variations if stored path doesn't exist
         if not hdf5_path or not os.path.exists(hdf5_path):
@@ -2952,8 +2955,7 @@ def import_edx_map_file(window):
                 'Map_Intensity': map_data.tolist(),
                 'Map_Shape': list(map_data.shape),
                 'Energy_Range': energy_range,
-                '_EDX_type': 'map',
-                '_HDF5_Path': hdf5_copy_path if os.path.exists(hdf5_copy_path) else file_path
+                '_EDX_type': 'map'
             }
 
         # ========== Create JSON file ==========
@@ -2976,8 +2978,7 @@ def import_edx_map_file(window):
                 'Map_Intensity': [[float(f"{val:.2f}") for val in row] for row in map_data],
                 'Map_Shape': list(map_data.shape),
                 'Energy_Range': energy_range,
-                '_EDX_type': 'map',
-                '_HDF5_Path': hdf5_copy_path if os.path.exists(hdf5_copy_path) else file_path
+                '_EDX_type': 'map'
             }
 
         with open(json_path, 'w') as jf:

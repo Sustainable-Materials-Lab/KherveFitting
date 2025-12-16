@@ -1745,7 +1745,9 @@ class FileManagerWindow(wx.Frame):
 
                     # Get HDF5 path from sheet data or try to find it
                     sheet_data = self.parent.Data['Core levels'].get('EDX~Map', {})
-                    hdf5_path = sheet_data.get('_HDF5_Path')
+                    # HDF5 path is derived from FilePath
+                    from libraries.ToolsMenu.EDX_SEM_Analysis import get_hdf5_path_from_filepath
+                    hdf5_path = get_hdf5_path_from_filepath(self.window.Data.get('FilePath'))
 
                     if not hdf5_path or not os.path.exists(hdf5_path):
                         if hasattr(self.parent, 'current_file_path') and self.parent.current_file_path:

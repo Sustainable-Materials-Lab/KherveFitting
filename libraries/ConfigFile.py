@@ -99,8 +99,7 @@ def add_core_level_Data(Data, window, file_path, sheet_name):
             core_level = {
                 'Name': sheet_name,
                 'Energy_Range': energy_range if energy_range else 'N/A',
-                '_EDX_type': 'map',
-                '_HDF5_Path': hdf5_path if os.path.exists(hdf5_path) else None
+                '_EDX_type': 'map'
             }
 
             Data['Core levels'][sheet_name] = core_level

@@ -4102,8 +4102,10 @@ class PlotManager:
                             break
 
                 # Also check if stored in sheet data
-                if not hdf5_path and '_HDF5_Path' in window.Data['Core levels'].get('EDX~Map', {}):
-                    hdf5_path = window.Data['Core levels']['EDX~Map']['_HDF5_Path']
+                if not hdf5_path:
+                    # HDF5 path is derived from FilePath
+                    from libraries.ToolsMenu.EDX_SEM_Analysis import get_hdf5_path_from_filepath
+                    hdf5_path = get_hdf5_path_from_filepath(window.Data.get('FilePath'))
 
 
                 # Add peak labels - check if they already exist
@@ -4169,23 +4171,19 @@ class PlotManager:
                 window.edx_window = open_edx_sem_window(window)
 
                 # Try to load the HDF5 data if available
-                if 'FilePath' in window.Data and window.Data['FilePath']:
-                    base_path = window.Data['FilePath'].replace('_EDX.xlsx', '')
-                    hdf5_variants = [
-                        f"{base_path}_EDX.hdf5",
-                        f"{base_path}_EDX.h5",
-                        f"{base_path}.hdf5",
-                        f"{base_path}.h5"
-                    ]
+                from libraries.ToolsMenu.EDX_SEM_Analysis import get_hdf5_path_from_filepath
+                hdf5_path = get_hdf5_path_from_filepath(window.Data.get('FilePath'))
 
-                    for hdf5_path in hdf5_variants:
-                        if os.path.exists(hdf5_path):
-                            try:
-                                window.edx_window.load_file(hdf5_path, 'EDX Map')
-                                print(f"Loaded EDX map from: {hdf5_path}")
-                            except Exception as e:
-                                print(f"Could not load EDX map: {e}")
-                            break
+                if hdf5_path and os.path.exists(hdf5_path):
+                    try:
+                        window.edx_window.load_file(hdf5_path, 'EDX Map')
+                        print(f"Loaded EDX map from: {hdf5_path}")
+                    except Exception as e:
+                        print(f"Could not load EDX map: {e}")
+                        import traceback
+                        traceback.print_exc()
+                else:
+                    print(f"HDF5 file not found: {hdf5_path}")
 
                 return True
 

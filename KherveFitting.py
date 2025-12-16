@@ -3351,8 +3351,8 @@ class MyFrame(wx.Frame):
         grid_fitting_method = self.peak_params_grid.GetCellValue(row, 13)  # Column 13 contains fitting method
         sheet_name = self.sheet_combobox.GetValue()
 
-        # Skip fit_peaks for D-parameter model
-        if grid_fitting_method not in ["D-parameter", "Unfitted", "Fermi"]:
+        # Skip fit_peaks for D-parameter model and EDX sheets
+        if grid_fitting_method not in ["D-parameter", "Unfitted", "Fermi"] and not sheet_name.startswith('EDX~'):
             if hasattr(self, 'peak_params_grid') and self.peak_params_grid.GetNumberRows() > 0:
                 from Functions import fit_peaks
                 fit_result = fit_peaks(self, self.peak_params_grid, evaluate=True)
