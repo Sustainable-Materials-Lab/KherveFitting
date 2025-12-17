@@ -2913,7 +2913,7 @@ def import_eels_map_file(window):
     import shutil
     import json
 
-    # Try to import EELS utilities
+    # Import standalone EELS utilities instead of HyperSpy
     try:
         from libraries.EELS_Utilities import load_eels
         EELS_UTILITIES_AVAILABLE = True
@@ -2921,7 +2921,7 @@ def import_eels_map_file(window):
         EELS_UTILITIES_AVAILABLE = False
 
     if not EELS_UTILITIES_AVAILABLE:
-        wx.MessageBox("EELS_Utilities not available. Cannot load EELS data.",
+        wx.MessageBox("EELS_Utilities library not available. Please ensure it is installed.",
                       "Error", wx.OK | wx.ICON_ERROR)
         return
 
@@ -2936,39 +2936,28 @@ def import_eels_map_file(window):
         file_path = dlg.GetPath()
 
     try:
-        # Initialize window.Data if needed
-        if not hasattr(window, 'Data'):
-            from libraries.ConfigFile import Init_Measurement_Data
-            window.Data = Init_Measurement_Data(window)
+        # RESET window.Data completely for new import
+        from libraries.ConfigFile import Init_Measurement_Data
+        window.Data = Init_Measurement_Data(window)
 
         if 'Core levels' not in window.Data:
             window.Data['Core levels'] = {}
 
-        # Load data with EELS_Utilities (no HyperSpy)
-        loaded_data = None
-        ext = os.path.splitext(file_path)[1].lower()
+        # Clear sheet combobox
+        window.sheet_combobox.Clear()
 
-        try:
-            loaded_data = load_eels(file_path)
-            print(f"Successfully loaded {ext} file with EELS_Utilities")
-        except Exception as e:
-            wx.MessageBox(f"Could not load file: {str(e)}",
+        # Load data with EELS_Utilities
+        loaded_data = load_eels(file_path)
+
+        if loaded_data is None:
+            wx.MessageBox("Could not load file.",
                           "Error", wx.OK | wx.ICON_ERROR)
             return
 
-        if isinstance(loaded_data, list):
-            if len(loaded_data) == 1:
-                loaded_data = loaded_data[0]
-            else:
-                wx.MessageBox("Multiple signals detected. Using first signal.",
-                              "Info", wx.OK | wx.ICON_INFORMATION)
-                loaded_data = loaded_data[0]
-
-        # Create file paths
+        # Create file paths - DM3 file stays in same location with same name
         base_name = os.path.splitext(os.path.basename(file_path))[0]
         excel_path = os.path.join(os.path.dirname(file_path), f"{base_name}_EELS.xlsx")
         json_path = os.path.join(os.path.dirname(file_path), f"{base_name}_EELS.json")
-        dm3_copy_path = os.path.join(os.path.dirname(file_path), f"{base_name}_EELS.dm3")
 
         # SET FILEPATH EARLY
         window.Data['FilePath'] = excel_path
@@ -2978,19 +2967,17 @@ def import_eels_map_file(window):
         if hasattr(window, 'Working_directory'):
             window.Working_directory = os.path.dirname(excel_path)
 
-        # Copy DM3/DM4 file
-        if file_path.lower().endswith(('.dm3', '.dm4')):
-            shutil.copy2(file_path, dm3_copy_path)
-            print(f"DM3 copy saved to: {dm3_copy_path}")
-
         # Create workbook
         wb = openpyxl.Workbook()
         wb.remove(wb.active)
 
-        # Get energy axis
+        # Get energy axis from signal
         energy_axis = None
         if hasattr(loaded_data, 'axes_manager') and len(loaded_data.axes_manager.signal_axes) > 0:
-            energy_axis = loaded_data.axes_manager.signal_axes[0].axis
+            signal_axis = loaded_data.axes_manager.signal_axes[0]
+            # Create energy axis: offset + index * scale
+            energy_axis = signal_axis.offset + np.arange(signal_axis.size) * signal_axis.scale
+            print(f"Energy axis: offset={signal_axis.offset:.2f}, scale={signal_axis.scale:.4f}, size={signal_axis.size}")
 
         if energy_axis is not None:
             energy_min = f"{np.min(energy_axis):.2f}"
@@ -2999,49 +2986,63 @@ def import_eels_map_file(window):
         else:
             energy_range = "N/A"
 
-        # EELS~Plot sheet
-        sum_signal = loaded_data.sum()
-        spectrum_data = sum_signal.data
+        # Get data
+        data = loaded_data.data
+
+        # EELS~Plot sheet - sum spectrum
+        if len(data.shape) == 3:
+            # Sum over spatial dimensions (Y, X)
+            spectrum_data = np.sum(data, axis=(0, 1))
+            map_data = np.sum(data, axis=2)
+        elif len(data.shape) == 1:
+            spectrum_data = data
+            map_data = None
+        else:
+            spectrum_data = data.flatten()
+            map_data = None
+
+        if energy_axis is None:
+            energy_axis = np.arange(len(spectrum_data))
 
         ws_plot = wb.create_sheet("EELS~Plot")
-        ws_plot.append(['Energy (eV)', 'Intensity', f'Range: {energy_range}'])
+        ws_plot.append(['Energy Loss (eV)', 'Intensity', f'Range: {energy_range}'])
 
         for i, intensity in enumerate(spectrum_data):
-            if energy_axis is not None:
+            if i < len(energy_axis):
                 ws_plot.append([f"{energy_axis[i]:.2f}", f"{intensity:.2f}"])
             else:
                 ws_plot.append([f"{i:.2f}", f"{intensity:.2f}"])
 
-        # EELS~Map sheet
-        ws_map = wb.create_sheet("EELS~Map")
-        map_data = np.sum(loaded_data.data, axis=2)
+        # EELS~Map sheet (if map data exists)
+        if map_data is not None:
+            ws_map = wb.create_sheet("EELS~Map")
 
-        ws_map.append([f'EELS Intensity Map - Range: {energy_range}'])
-        ws_map.append([''] * (map_data.shape[1] + 1))
+            ws_map.append([f'EELS Intensity Map - Range: {energy_range}'])
+            ws_map.append([''] * (map_data.shape[1] + 1))
 
-        for row in map_data:
-            ws_map.append([f"{val:.2f}" for val in row])
+            for row in map_data:
+                ws_map.append([f"{val:.2f}" for val in row])
 
-        # Create map image
-        fig, ax = plt.subplots(figsize=(map_data.shape[1] / 100, map_data.shape[0] / 100), dpi=100)
-        im = ax.imshow(map_data, cmap='plasma')
-        ax.set_title(f'EELS Map - {energy_range}')
-        plt.colorbar(im, ax=ax)
-        ax.axis('off')
+            # Create map image
+            fig, ax = plt.subplots(figsize=(map_data.shape[1] / 100, map_data.shape[0] / 100), dpi=100)
+            im = ax.imshow(map_data, cmap='plasma')
+            ax.set_title(f'EELS Map - {energy_range}')
+            plt.colorbar(im, ax=ax)
+            ax.axis('off')
 
-        img_buffer = BytesIO()
-        fig.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
-        img_buffer.seek(0)
-        plt.close(fig)
+            img_buffer = BytesIO()
+            fig.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
+            img_buffer.seek(0)
+            plt.close(fig)
 
-        img = OpenpyxlImage(img_buffer)
-        ws_map.add_image(img, f'A{map_data.shape[0] + 5}')
+            img = OpenpyxlImage(img_buffer)
+            ws_map.add_image(img, f'A{map_data.shape[0] + 5}')
 
         # Save Excel
         wb.save(excel_path)
         print(f"EELS data exported to: {excel_path}")
 
-        # ========== Add to window.Data - USE SAME STRUCTURE AS XPS ==========
+        # ========== Add to window.Data - USE SAME STRUCTURE AS XPS/EDX ==========
         energy_values = energy_axis if energy_axis is not None else np.arange(len(spectrum_data))
 
         # Add EELS~Plot sheet - SAME STRUCTURE AS XPS
@@ -3053,17 +3054,17 @@ def import_eels_map_file(window):
             'Background': {}
         }
 
-        # Add EELS~Map sheet
-        window.Data['Core levels']['EELS~Map'] = {
-            'Name': 'EELS~Map',
-            'Map_Intensity': map_data.tolist(),
-            'Map_Shape': list(map_data.shape),
-            'Energy_Range': energy_range,
-            '_EELS_type': 'map',
-            '_DM3_Path': dm3_copy_path if os.path.exists(dm3_copy_path) else file_path
-        }
+        # Add EELS~Map sheet (NO _DM3_Path - file is same name in same directory)
+        if map_data is not None:
+            window.Data['Core levels']['EELS~Map'] = {
+                'Name': 'EELS~Map',
+                'Map_Intensity': [[float(f"{val:.2f}") for val in row] for row in map_data],
+                'Map_Shape': list(map_data.shape),
+                'Energy_Range': energy_range,
+                '_EELS_type': 'map'
+            }
 
-        # ========== Create JSON file ==========
+        # ========== Create FRESH JSON file (no old data) ==========
         json_data = {
             'FilePath': excel_path,
             'Core levels': {}
@@ -3076,14 +3077,14 @@ def import_eels_map_file(window):
             '_EELS_type': 'plot'
         }
 
-        json_data['Core levels']['EELS~Map'] = {
-            'Name': 'EELS~Map',
-            'Map_Intensity': [[float(f"{val:.2f}") for val in row] for row in map_data],
-            'Map_Shape': list(map_data.shape),
-            'Energy_Range': energy_range,
-            '_EELS_type': 'map',
-            '_DM3_Path': dm3_copy_path if os.path.exists(dm3_copy_path) else file_path
-        }
+        if map_data is not None:
+            json_data['Core levels']['EELS~Map'] = {
+                'Name': 'EELS~Map',
+                'Map_Intensity': [[float(f"{val:.2f}") for val in row] for row in map_data],
+                'Map_Shape': list(map_data.shape),
+                'Energy_Range': energy_range,
+                '_EELS_type': 'map'
+            }
 
         with open(json_path, 'w') as jf:
             json.dump(json_data, jf, indent=2)
@@ -3099,7 +3100,8 @@ def import_eels_map_file(window):
 
         # Update sheet selector
         window.sheet_combobox.Append('EELS~Plot')
-        window.sheet_combobox.Append('EELS~Map')
+        if map_data is not None:
+            window.sheet_combobox.Append('EELS~Map')
         window.sheet_combobox.SetValue('EELS~Plot')
 
         # Update file location at bottom

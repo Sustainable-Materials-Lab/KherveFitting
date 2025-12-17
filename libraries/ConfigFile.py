@@ -75,8 +75,6 @@ def add_core_level_Data(Data, window, file_path, sheet_name):
             Data['Core levels'][sheet_name] = core_level
             return Data
 
-
-
         # ========== Handle EDX~Map sheets ==========
         if sheet_name == 'EDX~Map':
             # For EDX~Map, just store metadata - actual map will be loaded from HDF5
@@ -100,6 +98,74 @@ def add_core_level_Data(Data, window, file_path, sheet_name):
                 'Name': sheet_name,
                 'Energy_Range': energy_range if energy_range else 'N/A',
                 '_EDX_type': 'map'
+            }
+
+            Data['Core levels'][sheet_name] = core_level
+            return Data
+
+        # ========== Handle EELS~Plot sheets ==========
+        if sheet_name == 'EELS~Plot' or sheet_name.startswith('EELS~Plot'):
+            be_values = []
+            raw_data = []
+
+            for index, row in df.iterrows():
+                if index == 0:
+                    continue
+
+                be_val = row.iloc[0]
+                raw_val = row.iloc[1]
+
+                if pd.isna(be_val) or pd.isna(raw_val):
+                    continue
+
+                try:
+                    be_values.append(float(be_val))
+                    raw_data.append(float(raw_val))
+                except (ValueError, TypeError):
+                    continue
+
+            core_level = {
+                'Name': sheet_name,
+                'B.E.': be_values,
+                'Raw Data': raw_data,
+                '_EELS_type': 'plot',
+                'Background': {
+                    'Bkg Type': '',
+                    'Bkg Low': '',
+                    'Bkg High': '',
+                    'Bkg Offset Low': '',
+                    'Bkg Offset High': '',
+                    'Bkg X': be_values.copy(),
+                    'Bkg Y': raw_data.copy()
+                }
+            }
+
+            Data['Core levels'][sheet_name] = core_level
+            return Data
+
+        # ========== Handle EELS~Map sheets ==========
+        if sheet_name == 'EELS~Map':
+            # For EELS~Map, just store metadata - actual map will be loaded from DM3
+            energy_range = None
+
+            for index, row in df.iterrows():
+                if index == 0:
+                    header_text = str(row.iloc[0])
+                    if 'Range:' in header_text:
+                        energy_range = header_text.split('Range:')[1].strip()
+                    break  # Only need the header
+
+            # DM3 file is in same directory with same base name
+            # e.g., filename_EELS.xlsx -> filename.dm3 or filename.dm4
+            dm3_path = file_path.replace('_EELS.xlsx', '.dm3')
+            if not os.path.exists(dm3_path):
+                dm3_path = file_path.replace('_EELS.xlsx', '.dm4')
+
+            core_level = {
+                'Name': sheet_name,
+                'Energy_Range': energy_range if energy_range else 'N/A',
+                '_EELS_type': 'map',
+                '_DM3_Path': dm3_path if os.path.exists(dm3_path) else None
             }
 
             Data['Core levels'][sheet_name] = core_level

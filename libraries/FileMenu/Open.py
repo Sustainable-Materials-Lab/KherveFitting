@@ -4182,6 +4182,9 @@ def open_xlsx_file(window, file_path=None):
             if sheet_name == 'EDX~Map' or sheet_name == 'EDX~Plot' or sheet_name.startswith('EDX~Plot'):
                 continue
 
+            if sheet_name == 'EELS~Map' or sheet_name == 'EELS~Plot' or sheet_name.startswith('EELS~Plot'):
+                continue
+
             df = pd.read_excel(file_path, sheet_name=sheet_name, header=None)
             col1_value = str(df.iloc[0, 0]).strip().upper()
             col2_value = str(df.iloc[0, 1]).strip().upper()
@@ -4195,7 +4198,10 @@ def open_xlsx_file(window, file_path=None):
             # Also accept EDX-style headers (ENERGY (KEV))
             edx_valid = ('ENERGY' in col1_value and 'KEV' in col1_value) and 'INTENSITY' in col2_value
 
-            if not (xps_valid or raman_valid or xas_valid or edx_valid):
+            # Also accept ELLS-style headers (ENERGY (KEV))
+            eels_valid = ('ENERGY' in col1_value and 'KEV' in col1_value) and 'INTENSITY' in col2_value
+
+            if not (xps_valid or raman_valid or xas_valid or edx_valid or eels_valid):
                 console_frame.Close()
                 wx.MessageBox(f"Sheet '{sheet_name}' has invalid column labels", "Invalid Column Labels",
                               wx.OK | wx.ICON_WARNING)

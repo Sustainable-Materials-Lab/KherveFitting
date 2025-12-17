@@ -52,6 +52,13 @@ class EELSWindow(wx.Frame):
         self.current_colorbar = None
         self.zoom_selector = None
 
+        # Windows
+        self.info_window = None
+        self.data_browser_window = None
+
+        # Rotatable rectangle for area selection
+        self.rotatable_rect = None
+
         self.init_ui()
         self.Centre()
 
@@ -62,9 +69,6 @@ class EELSWindow(wx.Frame):
         """Initialize user interface"""
         panel = wx.Panel(self, style=wx.BORDER_RAISED)
         main_sizer = wx.BoxSizer(wx.VERTICAL)
-
-        # Create menubar
-        self.create_menubar()
 
         # Toolbar
         toolbar_panel = self.create_toolbar(panel)
@@ -105,53 +109,6 @@ class EELSWindow(wx.Frame):
         self.current_cmap = 'plasma'
 
         wx.CallAfter(self.Layout)
-
-    def create_menubar(self):
-        """Create menu bar"""
-        menubar = wx.MenuBar()
-
-        # File menu
-        file_menu = wx.Menu()
-
-        # Import submenu
-        import_menu = wx.Menu()
-        import_dm3 = import_menu.Append(wx.ID_ANY, "EELS Map (.dm3)...",
-                                        "Import EELS map from DM3 file")
-        import_dm4 = import_menu.Append(wx.ID_ANY, "EELS Map (.dm4)...",
-                                        "Import EELS map from DM4 file")
-        import_menu.AppendSeparator()
-        import_hdf5 = import_menu.Append(wx.ID_ANY, "EELS Map (HDF5)...",
-                                         "Import EELS map from HDF5 file")
-
-        file_menu.AppendSubMenu(import_menu, "Import")
-
-        # Export submenu
-        export_menu = wx.Menu()
-        export_excel = export_menu.Append(wx.ID_ANY, "Export to Excel...",
-                                          "Export data to Excel")
-        export_csv = export_menu.Append(wx.ID_ANY, "Export to CSV...",
-                                        "Export spectrum to CSV")
-        export_menu.AppendSeparator()
-        export_map_image = export_menu.Append(wx.ID_ANY, "Export Map as Image...",
-                                              "Save map as PNG/TIFF")
-
-        file_menu.AppendSubMenu(export_menu, "Export")
-
-        file_menu.AppendSeparator()
-        close_item = file_menu.Append(wx.ID_CLOSE, "Close\tCtrl+W", "Close window")
-
-        menubar.Append(file_menu, "&File")
-
-        self.SetMenuBar(menubar)
-
-        # Bind menu events
-        self.Bind(wx.EVT_MENU, self.on_import_dm3, import_dm3)
-        self.Bind(wx.EVT_MENU, self.on_import_dm4, import_dm4)
-        self.Bind(wx.EVT_MENU, self.on_import_hdf5, import_hdf5)
-        self.Bind(wx.EVT_MENU, self.on_export_excel, export_excel)
-        self.Bind(wx.EVT_MENU, self.on_export_csv, export_csv)
-        self.Bind(wx.EVT_MENU, self.on_export_map_image, export_map_image)
-        self.Bind(wx.EVT_MENU, lambda e: self.Close(), close_item)
 
     def create_toolbar(self, parent):
         """Create toolbar with icon buttons only"""
@@ -236,10 +193,14 @@ class EELSWindow(wx.Frame):
         # Add spacer
         toolbar_sizer.AddStretchSpacer()
 
-        # Sensitivity/Display controls button
+        # Sensitivity/Display controls button - use Settings PNG icon
         self.sensitivity_btn = wx.BitmapButton(toolbar_panel, size=btn_size)
-        self.sensitivity_btn.SetBitmap(self.create_icon_bitmap('sensitivity'))
-        self.sensitivity_btn.SetToolTip("Display Controls")
+        settings_path = os.path.join(icon_path, "Settings-3.png")
+        if os.path.exists(settings_path):
+            self.sensitivity_btn.SetBitmap(wx.Bitmap(settings_path, wx.BITMAP_TYPE_PNG))
+        else:
+            self.sensitivity_btn.SetBitmap(self.create_icon_bitmap('sensitivity'))
+        self.sensitivity_btn.SetToolTip("Display & Sensitivity Controls")
         self.sensitivity_btn.Bind(wx.EVT_BUTTON, self.on_sensitivity_controls)
         toolbar_sizer.Add(self.sensitivity_btn, 0, wx.ALL, 2)
 
@@ -458,7 +419,7 @@ class EELSWindow(wx.Frame):
             self.selection_mode = None
 
     def on_area_mode(self, event):
-        """Toggle area selection mode"""
+        """Toggle area selection mode with rotatable rectangle"""
         if self.area_btn.GetValue():
             self.zoom_in_btn.SetValue(False)
             self.pan_btn.SetValue(False)
@@ -469,27 +430,79 @@ class EELSWindow(wx.Frame):
             if hasattr(self, 'zoom_selector') and self.zoom_selector:
                 self.zoom_selector.set_active(False)
 
-            self.clear_selection_markers()
-
-            if self.rect_selector is None:
-                self.rect_selector = RectangleSelector(
-                    self.map_ax,
-                    self.on_area_select,
-                    useblit=True,
-                    props=dict(facecolor='green', edgecolor='lime',
-                               alpha=0.3, fill=True),
-                    button=[1],
-                    minspanx=2,
-                    minspany=2,
-                    spancoords='pixels',
-                    interactive=False
-                )
-            else:
-                self.rect_selector.set_active(True)
-        else:
-            self.selection_mode = None
+            # Deactivate old rectangle selector
             if self.rect_selector:
                 self.rect_selector.set_active(False)
+
+            # Create or activate rotatable rectangle
+            if not hasattr(self, 'rotatable_rect') or self.rotatable_rect is None:
+                self.rotatable_rect = RotatableRectangle(self.map_ax, self.on_rotated_area_complete)
+
+            self.clear_selection_markers()
+
+            # Connect to canvas for starting new selections
+            if not hasattr(self, '_area_press_cid'):
+                self._area_press_cid = self.map_canvas.mpl_connect('button_press_event',
+                                                                   lambda e: self.rotatable_rect.start_selection(e) if self.area_btn.GetValue() and e.button == 1 else None)
+        else:
+            self.selection_mode = None
+            if hasattr(self, 'rotatable_rect') and self.rotatable_rect:
+                self.rotatable_rect.clear()
+            if self.rect_selector:
+                self.rect_selector.set_active(False)
+
+    def on_rotated_area_complete(self, center, width, height, angle):
+        """Handle completion of rotated area selection with proper pixel extraction"""
+        if self.current_data is None:
+            return
+
+        data = self.current_data.data
+        if len(data.shape) != 3:
+            return
+
+        cx, cy = center
+
+        # Create rotation matrix
+        angle_rad = np.radians(-angle)  # Negative for inverse transform
+        cos_a = np.cos(angle_rad)
+        sin_a = np.sin(angle_rad)
+
+        # Get all pixel coordinates
+        y_indices, x_indices = np.meshgrid(np.arange(data.shape[0]), np.arange(data.shape[1]), indexing='ij')
+
+        # Transform all pixels to rectangle's local coordinate system
+        local_x = (x_indices - cx) * cos_a - (y_indices - cy) * sin_a
+        local_y = (x_indices - cx) * sin_a + (y_indices - cy) * cos_a
+
+        # Create mask for pixels inside rectangle
+        mask = (np.abs(local_x) <= width / 2) & (np.abs(local_y) <= height / 2)
+
+        if not np.any(mask):
+            return
+
+        # Extract spectra from all pixels inside rectangle
+        selected_spectra = data[mask]
+        summed_spectrum = np.sum(selected_spectra, axis=0)
+
+        # Get energy axis
+        energy_axis = self.get_energy_axis()
+        if energy_axis is None:
+            energy_axis = np.arange(len(summed_spectrum))
+
+        # Store selection info
+        self.selected_areas = [(cx, cy, width, height, angle)]
+
+        print(f"Rotated area: center=({cx:.0f},{cy:.0f}), size=({width:.0f}x{height:.0f}), angle={angle:.1f}°")
+        print(f"Selected {np.sum(mask)} pixels")
+
+        # Plot spectrum in parent window
+        if self.parent is not None and hasattr(self.parent, 'ax'):
+            self.parent.ax.clear()
+            self.parent.ax.plot(energy_axis, summed_spectrum, 'k-', linewidth=0.8)
+            self.parent.ax.set_xlabel('Energy Loss (eV)')
+            self.parent.ax.set_ylabel('Intensity')
+            self.parent.ax.set_title(f'EELS - Rotated Area ({width:.0f}×{height:.0f} px, {angle:.1f}°)')
+            self.parent.canvas.draw()
 
     def on_line_mode(self, event):
         """Toggle line selection mode"""
@@ -521,6 +534,11 @@ class EELSWindow(wx.Frame):
 
         self.clear_selection_markers()
         self._clear_line_preview()
+
+        # Clear rotatable rectangle if it exists
+        if hasattr(self, 'rotatable_rect') and self.rotatable_rect:
+            self.rotatable_rect.clear()
+
         self.map_canvas.draw()
 
     def on_intensity_map(self, event):
@@ -530,25 +548,56 @@ class EELSWindow(wx.Frame):
         self.plot_current_map()
 
     def on_right_click(self, event):
-        """Handle right-click context menu"""
+        """Show right-click context menu"""
         menu = wx.Menu()
 
-        # Colormap submenu
-        cmap_menu = wx.Menu()
-        cmaps = ['plasma', 'viridis', 'inferno', 'magma', 'hot', 'jet', 'gray']
-        for cmap in cmaps:
-            item = cmap_menu.AppendRadioItem(wx.ID_ANY, cmap)
-            if cmap == self.current_cmap:
-                item.Check(True)
-            self.Bind(wx.EVT_MENU,
-                      lambda e, c=cmap: self.change_colormap(c), item)
-        menu.AppendSubMenu(cmap_menu, "Colormap")
+        # Save EELS Plot option at top
+        save_plot_item = menu.Append(wx.ID_ANY, "Save Current EELS Plot...")
+        self.Bind(wx.EVT_MENU, self.on_save_eels_plot, save_plot_item)
 
         menu.AppendSeparator()
 
-        # Reset view
-        reset_item = menu.Append(wx.ID_ANY, "Reset View")
-        self.Bind(wx.EVT_MENU, lambda e: self.on_zoom_out(None), reset_item)
+        # HeatMap submenu
+        heatmap_menu = wx.Menu()
+        colormaps = ['Greens', 'plasma', 'viridis', 'inferno', 'magma', 'hot', 'cool', 'gray', 'jet',
+                     'rainbow', 'turbo', 'cividis', 'Spectral', 'coolwarm', 'RdYlBu', 'RdBu',
+                     'Blues', 'Reds', 'Oranges', 'Purples', 'YlOrRd', 'YlGnBu', 'RdPu', 'BuPu',
+                     'GnBu', 'PuBu', 'YlGn', 'binary', 'bone', 'copper', 'autumn', 'winter',
+                     'spring', 'summer', 'twilight', 'hsv', 'nipy_spectral', 'terrain', 'ocean',
+                     'gist_earth', 'seismic', 'bwr', 'BrBG', 'PRGn', 'PiYG', 'RdGy', 'RdYlGn']
+
+        for cmap in colormaps:
+            item = heatmap_menu.AppendRadioItem(wx.ID_ANY, cmap)
+            if cmap == self.current_cmap:
+                item.Check(True)
+            self.Bind(wx.EVT_MENU, lambda evt, c=cmap: self.change_colormap(c), item)
+
+        menu.AppendSubMenu(heatmap_menu, "HeatMap")
+
+        menu.AppendSeparator()
+
+        # Export submenu
+        export_menu = wx.Menu()
+        export_excel_item = export_menu.Append(wx.ID_ANY, "Export to Excel...")
+        export_csv_item = export_menu.Append(wx.ID_ANY, "Export to CSV...")
+        export_image_item = export_menu.Append(wx.ID_ANY, "Export Map Image...")
+
+        self.Bind(wx.EVT_MENU, self.on_export_excel, export_excel_item)
+        self.Bind(wx.EVT_MENU, self.on_export_csv, export_csv_item)
+        self.Bind(wx.EVT_MENU, self.on_export_map_image, export_image_item)
+
+        menu.AppendSubMenu(export_menu, "Export")
+
+        menu.AppendSeparator()
+
+        data_browser_item = menu.Append(wx.ID_ANY, "Data Browser...")
+        info_item = menu.Append(wx.ID_ANY, "Info...")
+        menu.AppendSeparator()
+        clear_item = menu.Append(wx.ID_ANY, "Clear Selections")
+
+        self.Bind(wx.EVT_MENU, self.on_show_data_browser, data_browser_item)
+        self.Bind(wx.EVT_MENU, self.on_show_info, info_item)
+        self.Bind(wx.EVT_MENU, self.on_clear_selections, clear_item)
 
         self.PopupMenu(menu)
         menu.Destroy()
@@ -566,12 +615,17 @@ class EELSWindow(wx.Frame):
             return
 
         if self.selection_mode == 'point':
+            # Adjust point size with scroll wheel
             if event.button == 'up':
                 self.point_size = min(50, self.point_size + 1)
             elif event.button == 'down':
                 self.point_size = max(1, self.point_size - 1)
 
             self._update_point_preview(event.xdata, event.ydata)
+
+        elif self.selection_mode == 'area':
+            # Rotation is handled by RotatableRectangle.on_scroll
+            pass
 
     def _update_point_preview(self, x, y):
         """Update point size preview rectangle"""
@@ -581,15 +635,17 @@ class EELSWindow(wx.Frame):
             return
 
         if self.point_size == 1:
-            marker, = self.map_ax.plot(x, y, 'g+', markersize=15,
+            # Single pixel - show as red cross
+            marker, = self.map_ax.plot(x, y, 'r+', markersize=15,
                                        markeredgewidth=2, alpha=0.5)
             marker._is_point_preview = True
         else:
+            # Show red rectangle preview
             half_size = self.point_size / 2
             rect = patches.Rectangle((x - half_size, y - half_size),
                                       self.point_size, self.point_size,
-                                      linewidth=2, edgecolor='lime',
-                                      facecolor='green', alpha=0.3)
+                                      linewidth=2, edgecolor='red',
+                                      facecolor='salmon', alpha=0.3)
             rect._is_point_preview = True
             self.map_ax.add_patch(rect)
 
@@ -1476,6 +1532,167 @@ class EELSWindow(wx.Frame):
 
     # ==================== WINDOW MANAGEMENT ====================
 
+    def on_save_eels_plot(self, event):
+        """Save current EELS plot to a numbered sheet in Excel and window.Data"""
+        if self.parent is None:
+            return
+
+        # Check if Excel file exists
+        if 'FilePath' not in self.parent.Data or not self.parent.Data['FilePath']:
+            wx.MessageBox("No Excel file found. Please ensure the EELS data was imported correctly.",
+                          "No File", wx.OK | wx.ICON_WARNING)
+            return
+
+        # Find next available EELS~Plot number
+        existing_sheets = list(self.parent.Data.get('Core levels', {}).keys())
+        plot_num = 1
+        while f'EELS~Plot{plot_num}' in existing_sheets:
+            plot_num += 1
+
+        sheet_name = f'EELS~Plot{plot_num}'
+
+        # Gather current selection info
+        selection_info = self._get_current_selection_info()
+
+        if selection_info is None:
+            wx.MessageBox("No selection to save. Please select a point, line, or area first.",
+                          "No Selection", wx.OK | wx.ICON_WARNING)
+            return
+
+        # Get current spectrum data from parent
+        if not hasattr(self.parent, 'ax') or len(self.parent.ax.lines) == 0:
+            wx.MessageBox("No EELS plot data to save.", "No Data", wx.OK | wx.ICON_WARNING)
+            return
+
+        # Get spectrum data from plot
+        line = self.parent.ax.lines[0]
+        energy = line.get_xdata()
+        intensity = line.get_ydata()
+
+        # Create sheet data - USE SAME STRUCTURE AS XPS SHEETS
+        import datetime
+        import json
+        sheet_data = {
+            'Name': sheet_name,
+            'B.E.': [float(f"{v:.2f}") for v in energy],
+            'Raw Data': [float(f"{v:.2f}") for v in intensity],
+            '_EELS_type': 'plot',
+            '_EELS_selection': selection_info,
+            '_EELS_save_time': datetime.datetime.now().isoformat(),
+            'Background': {}
+        }
+
+        # Save to parent Data
+        if 'Core levels' not in self.parent.Data:
+            self.parent.Data['Core levels'] = {}
+
+        self.parent.Data['Core levels'][sheet_name] = sheet_data
+
+        # Update sheet combobox
+        if sheet_name not in [self.parent.sheet_combobox.GetString(i)
+                              for i in range(self.parent.sheet_combobox.GetCount())]:
+            self.parent.sheet_combobox.Append(sheet_name)
+
+        # Save to Excel file
+        try:
+            import pandas as pd
+
+            file_path = self.parent.Data['FilePath']
+
+            # Create DataFrame for this plot
+            eels_df = pd.DataFrame({
+                'Energy Loss (eV)': [f"{v:.2f}" for v in energy],
+                'Intensity': [f"{v:.2f}" for v in intensity]
+            })
+
+            # Append to Excel file
+            with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+                eels_df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+            print(f"Saved {sheet_name} to Excel: {file_path}")
+
+            # Also update JSON
+            json_path = file_path.replace('.xlsx', '.json')
+            if os.path.exists(json_path):
+                with open(json_path, 'r') as f:
+                    json_data = json.load(f)
+
+                if 'Core levels' not in json_data:
+                    json_data['Core levels'] = {}
+
+                json_data['Core levels'][sheet_name] = {
+                    'Name': sheet_name,
+                    'B.E.': [float(f"{v:.2f}") for v in energy],
+                    'Raw Data': [float(f"{v:.2f}") for v in intensity],
+                    '_EELS_type': 'plot',
+                    '_EELS_selection': selection_info
+                }
+
+                with open(json_path, 'w') as f:
+                    json.dump(json_data, f, indent=2)
+
+            # Short message
+            wx.MessageBox(f"Saved as {sheet_name}", "Saved", wx.OK | wx.ICON_INFORMATION)
+
+        except Exception as e:
+            print(f"Error saving to Excel: {e}")
+            import traceback
+            traceback.print_exc()
+            wx.MessageBox(f"Error saving to Excel: {e}", "Error", wx.OK | wx.ICON_ERROR)
+
+    def _get_current_selection_info(self):
+        """Get current selection information"""
+        # Check for rotatable rectangle first
+        if hasattr(self, 'rotatable_rect') and self.rotatable_rect and self.rotatable_rect.active:
+            rect = self.rotatable_rect
+            return {
+                'type': 'rectangle',
+                'center_x': float(rect.center[0]),
+                'center_y': float(rect.center[1]),
+                'width': float(rect.width),
+                'height': float(rect.height),
+                'angle': float(rect.angle)
+            }
+        elif self.selected_points:
+            point = self.selected_points[-1]
+            if len(point) == 3:
+                x, y, size = point
+            else:
+                x, y = point
+                size = 1
+            return {'type': 'point', 'x': int(x), 'y': int(y), 'size': int(size)}
+        elif self.selected_areas:
+            area = self.selected_areas[-1]
+            if len(area) == 5:
+                # Rotated area: (cx, cy, width, height, angle)
+                cx, cy, w, h, angle = area
+                return {'type': 'rectangle', 'center_x': float(cx), 'center_y': float(cy),
+                        'width': float(w), 'height': float(h), 'angle': float(angle)}
+            else:
+                # Standard area: (x1, y1, x2, y2)
+                x1, y1, x2, y2 = area
+                return {'type': 'area', 'x1': int(x1), 'y1': int(y1), 'x2': int(x2), 'y2': int(y2)}
+        return None
+
+    def on_show_data_browser(self, event):
+        """Show data browser window"""
+        if not hasattr(self, 'data_browser_window') or self.data_browser_window is None:
+            self.data_browser_window = EELSDataBrowserWindow(self)
+        self.data_browser_window.Show()
+        self.data_browser_window.Raise()
+
+    def on_show_info(self, event):
+        """Show info window"""
+        if self.current_data is None:
+            wx.MessageBox("No data loaded", "Info", wx.OK | wx.ICON_INFORMATION)
+            return
+
+        if not hasattr(self, 'info_window') or self.info_window is None:
+            self.info_window = EELSInfoWindow(self)
+        self.info_window.update_info(self.current_data)
+        self.info_window.Show()
+        self.info_window.Raise()
+
     def on_close(self, event):
         """Handle window close event"""
         # Clear parent reference
@@ -1486,6 +1703,20 @@ class EELSWindow(wx.Frame):
         if hasattr(self, 'sensitivity_window') and self.sensitivity_window:
             try:
                 self.sensitivity_window.Destroy()
+            except:
+                pass
+
+        # Destroy info window if open
+        if hasattr(self, 'info_window') and self.info_window:
+            try:
+                self.info_window.Destroy()
+            except:
+                pass
+
+        # Destroy data browser window if open
+        if hasattr(self, 'data_browser_window') and self.data_browser_window:
+            try:
+                self.data_browser_window.Destroy()
             except:
                 pass
 
@@ -1533,6 +1764,471 @@ class EELSSensitivityWindow(wx.Frame):
     def on_cmap_change(self, event):
         self.parent.current_cmap = self.cmap_combo.GetValue()
         self.parent.plot_current_map()
+
+
+class EELSInfoWindow(wx.Frame):
+    """Window showing EELS data information"""
+
+    def __init__(self, parent):
+        super().__init__(parent, title="EELS Info", size=(400, 350),
+                         style=wx.DEFAULT_FRAME_STYLE | wx.STAY_ON_TOP)
+        self.parent = parent
+        self.init_ui()
+        self.Centre()
+
+    def init_ui(self):
+        panel = wx.Panel(self)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        self.info_text = wx.TextCtrl(panel, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.HSCROLL)
+        sizer.Add(self.info_text, 1, wx.EXPAND | wx.ALL, 10)
+
+        close_btn = wx.Button(panel, wx.ID_CLOSE, "Close")
+        close_btn.Bind(wx.EVT_BUTTON, lambda e: self.Hide())
+        sizer.Add(close_btn, 0, wx.ALL | wx.ALIGN_CENTER, 5)
+
+        panel.SetSizer(sizer)
+
+    def update_info(self, signal):
+        """Update info display with signal information"""
+        info_lines = []
+        info_lines.append("=" * 40)
+        info_lines.append("EELS Data Information")
+        info_lines.append("=" * 40)
+
+        if hasattr(signal, 'data'):
+            info_lines.append(f"\nData Shape: {signal.data.shape}")
+            info_lines.append(f"Data Type: {signal.data.dtype}")
+            info_lines.append(f"Min Value: {np.min(signal.data):.2f}")
+            info_lines.append(f"Max Value: {np.max(signal.data):.2f}")
+            info_lines.append(f"Mean Value: {np.mean(signal.data):.2f}")
+
+        if hasattr(signal, 'axes_manager'):
+            info_lines.append("\n" + "-" * 40)
+            info_lines.append("Axes Information:")
+            info_lines.append("-" * 40)
+
+            for i, axis in enumerate(signal.axes_manager._axes):
+                info_lines.append(f"\nAxis {i}: {axis.name}")
+                info_lines.append(f"  Size: {axis.size}")
+                info_lines.append(f"  Scale: {axis.scale:.6f}")
+                info_lines.append(f"  Offset: {axis.offset:.6f}")
+                info_lines.append(f"  Units: {axis.units}")
+
+            info_lines.append("\n" + "-" * 40)
+            info_lines.append(f"Navigation Axes: {len(signal.axes_manager.navigation_axes)}")
+            info_lines.append(f"Signal Axes: {len(signal.axes_manager.signal_axes)}")
+
+        self.info_text.SetValue("\n".join(info_lines))
+
+
+class EELSDataBrowserWindow(wx.Frame):
+    """Window for browsing EELS data"""
+
+    def __init__(self, parent):
+        super().__init__(parent, title="EELS Data Browser", size=(350, 400),
+                         style=wx.DEFAULT_FRAME_STYLE | wx.STAY_ON_TOP)
+        self.parent = parent
+        self.init_ui()
+        self.Centre()
+        self.refresh_tree()
+
+    def init_ui(self):
+        panel = wx.Panel(self)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        # Tree control for data hierarchy
+        self.tree = wx.TreeCtrl(panel, style=wx.TR_DEFAULT_STYLE | wx.TR_HIDE_ROOT)
+        sizer.Add(self.tree, 1, wx.EXPAND | wx.ALL, 5)
+
+        # Buttons
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        refresh_btn = wx.Button(panel, label="Refresh")
+        refresh_btn.Bind(wx.EVT_BUTTON, lambda e: self.refresh_tree())
+        btn_sizer.Add(refresh_btn, 0, wx.ALL, 5)
+
+        close_btn = wx.Button(panel, wx.ID_CLOSE, "Close")
+        close_btn.Bind(wx.EVT_BUTTON, lambda e: self.Hide())
+        btn_sizer.Add(close_btn, 0, wx.ALL, 5)
+
+        sizer.Add(btn_sizer, 0, wx.ALIGN_CENTER)
+
+        panel.SetSizer(sizer)
+
+    def refresh_tree(self):
+        """Refresh the data tree"""
+        self.tree.DeleteAllItems()
+        root = self.tree.AddRoot("EELS Data")
+
+        if self.parent.loaded_signals:
+            for i, signal_info in enumerate(self.parent.loaded_signals):
+                filename = signal_info.get('filename', f'Signal {i}')
+                signal = signal_info.get('data')
+
+                item = self.tree.AppendItem(root, filename)
+
+                if signal is not None and hasattr(signal, 'data'):
+                    shape_item = self.tree.AppendItem(item, f"Shape: {signal.data.shape}")
+                    dtype_item = self.tree.AppendItem(item, f"Type: {signal.data.dtype}")
+
+                    if hasattr(signal, 'axes_manager'):
+                        axes_item = self.tree.AppendItem(item, "Axes")
+                        for j, axis in enumerate(signal.axes_manager._axes):
+                            ax_text = f"{axis.name}: {axis.size} pts, {axis.scale:.4f} {axis.units}"
+                            self.tree.AppendItem(axes_item, ax_text)
+
+        self.tree.ExpandAll()
+
+
+class RotatableRectangle:
+    """Custom rotatable rectangle selector for area selection"""
+
+    def __init__(self, ax, callback):
+        self.ax = ax
+        self.callback = callback
+        self.active = False
+        self.angle = 0
+
+        self.center = None
+        self.width = None
+        self.height = None
+
+        self.rectangle = None
+        self.rotation_handle = None
+        self.resize_handles = []
+
+        self.dragging = False
+        self.rotating = False
+        self.resizing = False
+        self.drag_start = None
+        self.resize_corner = None
+        self.angle_text = None
+
+        self._stored_xlim = None
+        self._stored_ylim = None
+
+        self.cid_press = ax.figure.canvas.mpl_connect('button_press_event', self.on_press)
+        self.cid_release = ax.figure.canvas.mpl_connect('button_release_event', self.on_release)
+        self.cid_motion = ax.figure.canvas.mpl_connect('motion_notify_event', self.on_motion)
+        self.cid_scroll = ax.figure.canvas.mpl_connect('scroll_event', self.on_scroll)
+
+    def start_selection(self, event):
+        """Start creating a new rectangle"""
+        if event.inaxes != self.ax or event.button != 1:
+            return
+
+        # If not active, create new rectangle at click position
+        if not self.active:
+            # Store axis limits BEFORE any drawing
+            self._stored_xlim = self.ax.get_xlim()
+            self._stored_ylim = self.ax.get_ylim()
+
+            self.center = (event.xdata, event.ydata)
+            self.width = 10
+            self.height = 10
+            self.angle = 0
+            self.active = True
+            self.draw_rectangle()
+
+    def draw_rectangle(self):
+        """Draw the rotatable rectangle and handles"""
+        # Clear existing elements safely
+        if self.rectangle:
+            try:
+                self.rectangle.remove()
+            except (ValueError, AttributeError):
+                pass
+            self.rectangle = None
+
+        for handle in self.resize_handles:
+            try:
+                handle.remove()
+            except (ValueError, AttributeError):
+                pass
+        self.resize_handles = []
+
+        if self.rotation_handle:
+            try:
+                self.rotation_handle.remove()
+            except (ValueError, AttributeError):
+                pass
+            self.rotation_handle = None
+
+        if self.angle_text:
+            try:
+                self.angle_text.remove()
+            except (ValueError, AttributeError):
+                pass
+            self.angle_text = None
+
+        if self.center is None:
+            self.ax.figure.canvas.draw_idle()
+            return
+
+        from matplotlib.patches import Rectangle
+        from matplotlib.transforms import Affine2D
+
+        rect = Rectangle((-self.width / 2, -self.height / 2), self.width, self.height,
+                         linewidth=2, edgecolor='red', facecolor='red', alpha=0.3)
+
+        t = Affine2D().rotate_deg(self.angle).translate(*self.center) + self.ax.transData
+        rect.set_transform(t)
+        rect._is_selection_marker = True
+
+        self.rectangle = self.ax.add_patch(rect)
+
+        # Rotation handle (red)
+        handle_dist = max(self.width, self.height) / 2 + 10
+        angle_rad = np.radians(self.angle)
+        handle_x = self.center[0] + handle_dist * np.sin(angle_rad)
+        handle_y = self.center[1] + handle_dist * np.cos(angle_rad)
+
+        self.rotation_handle = self.ax.plot(handle_x, handle_y, 'ro', markersize=10,
+                                            markeredgecolor='darkred', markeredgewidth=2)[0]
+        self.rotation_handle._is_selection_marker = True
+
+        # Show angle text when rotating
+        if self.rotating:
+            self.angle_text = self.ax.text(handle_x, handle_y + 5, f'{self.angle:.1f}°',
+                                           fontsize=9, color='white', fontweight='bold',
+                                           ha='center', va='bottom',
+                                           bbox=dict(boxstyle='round,pad=0.2', facecolor='darkred', alpha=0.7))
+            self.angle_text._is_selection_marker = True
+
+        # Resize handles at corners (red)
+        corners = self.get_corners()
+        for corner in corners:
+            handle = self.ax.plot(corner[0], corner[1], 'rs', markersize=8,
+                                  markeredgecolor='darkred', markeredgewidth=1)[0]
+            handle._is_selection_marker = True
+            self.resize_handles.append(handle)
+
+        # ALWAYS restore stored axis limits to prevent expansion
+        if self._stored_xlim is not None and self._stored_ylim is not None:
+            self.ax.set_xlim(self._stored_xlim)
+            self.ax.set_ylim(self._stored_ylim)
+
+        self.ax.figure.canvas.draw_idle()
+
+    def get_corners(self):
+        """Get the four corners of the rotated rectangle"""
+        angle_rad = np.radians(self.angle)
+        cos_a = np.cos(angle_rad)
+        sin_a = np.sin(angle_rad)
+
+        hw = self.width / 2
+        hh = self.height / 2
+        corners_local = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]
+
+        corners = []
+        for x, y in corners_local:
+            rx = x * cos_a - y * sin_a + self.center[0]
+            ry = x * sin_a + y * cos_a + self.center[1]
+            corners.append((rx, ry))
+
+        return corners
+
+    def on_scroll(self, event):
+        """Handle mouse scroll to rotate rectangle"""
+        if not self.active or event.inaxes != self.ax:
+            return
+
+        # Check if mouse is near the rectangle
+        if self.center is None:
+            return
+
+        # Rotate by 5 degrees per scroll step
+        if event.button == 'up':
+            self.angle += 5
+        elif event.button == 'down':
+            self.angle -= 5
+
+        # Normalize angle to -180 to 180
+        self.angle = ((self.angle + 180) % 360) - 180
+
+        self.draw_rectangle()
+
+        # Trigger callback
+        if self.callback:
+            self.callback(self.center, self.width, self.height, self.angle)
+
+    def on_press(self, event):
+        """Handle mouse press"""
+        if not self.active or event.inaxes != self.ax or event.button != 1:
+            return
+
+        # Store current limits
+        if self._stored_xlim is None:
+            self._stored_xlim = self.ax.get_xlim()
+            self._stored_ylim = self.ax.get_ylim()
+
+        # Check rotation handle first (highest priority)
+        if self.rotation_handle:
+            handle_data = self.rotation_handle.get_data()
+            dist = np.sqrt((event.xdata - handle_data[0][0]) ** 2 + (event.ydata - handle_data[1][0]) ** 2)
+            if dist < 8:
+                self.rotating = True
+                self.drag_start = (event.xdata, event.ydata)
+                return
+
+        # Check resize handles - but only if very close (within 5 pixels)
+        closest_handle_dist = float('inf')
+        closest_handle_idx = None
+        for i, handle in enumerate(self.resize_handles):
+            handle_data = handle.get_data()
+            dist = np.sqrt((event.xdata - handle_data[0][0]) ** 2 + (event.ydata - handle_data[1][0]) ** 2)
+            if dist < closest_handle_dist:
+                closest_handle_dist = dist
+                closest_handle_idx = i
+
+        # Only resize if very close to handle (< 5 pixels)
+        if closest_handle_dist < 5:
+            self.resizing = True
+            self.resize_corner = closest_handle_idx
+            self.drag_start = (event.xdata, event.ydata)
+            return
+
+        # Check if inside rectangle for dragging (most common operation)
+        if self.point_in_rectangle(event.xdata, event.ydata):
+            self.dragging = True
+            self.drag_start = (event.xdata, event.ydata)
+            return
+
+        # If not inside but close to resize handle (< 10 pixels), allow resize
+        if closest_handle_dist < 10:
+            self.resizing = True
+            self.resize_corner = closest_handle_idx
+            self.drag_start = (event.xdata, event.ydata)
+
+    def on_release(self, event):
+        """Handle mouse release"""
+        was_interacting = self.dragging or self.resizing or self.rotating
+
+        self.dragging = False
+        self.rotating = False
+        self.resizing = False
+        self.drag_start = None
+
+        # Restore limits after any operation
+        if self._stored_xlim is not None and self._stored_ylim is not None:
+            self.ax.set_xlim(self._stored_xlim)
+            self.ax.set_ylim(self._stored_ylim)
+
+        # Trigger callback after interaction
+        if was_interacting and self.callback and self.center:
+            self.callback(self.center, self.width, self.height, self.angle)
+
+    def on_motion(self, event):
+        """Handle mouse motion"""
+        if event.inaxes != self.ax or self.drag_start is None:
+            return
+
+        if event.xdata is None or event.ydata is None:
+            return
+
+        dx = event.xdata - self.drag_start[0]
+        dy = event.ydata - self.drag_start[1]
+
+        if self.dragging:
+            new_x = self.center[0] + dx
+            new_y = self.center[1] + dy
+
+            # Clamp to stored bounds
+            if self._stored_xlim is not None:
+                new_x = max(self._stored_xlim[0], min(self._stored_xlim[1], new_x))
+            if self._stored_ylim is not None:
+                y_min = min(self._stored_ylim[0], self._stored_ylim[1])
+                y_max = max(self._stored_ylim[0], self._stored_ylim[1])
+                new_y = max(y_min, min(y_max, new_y))
+
+            self.center = (new_x, new_y)
+            self.drag_start = (event.xdata, event.ydata)
+            self.draw_rectangle()
+
+        elif self.rotating:
+            angle_to_center = np.arctan2(event.xdata - self.center[0], event.ydata - self.center[1])
+            self.angle = np.degrees(angle_to_center)
+            self.draw_rectangle()
+
+        elif self.resizing:
+            angle_rad = np.radians(-self.angle)
+            cos_a = np.cos(angle_rad)
+            sin_a = np.sin(angle_rad)
+
+            local_x = (event.xdata - self.center[0]) * cos_a - (event.ydata - self.center[1]) * sin_a
+            local_y = (event.xdata - self.center[0]) * sin_a + (event.ydata - self.center[1]) * cos_a
+
+            # Allow minimum size of 1 pixel
+            self.width = max(1, abs(local_x) * 2)
+            self.height = max(1, abs(local_y) * 2)
+            self.draw_rectangle()
+
+    def point_in_rectangle(self, x, y):
+        """Check if point is inside the rotated rectangle"""
+        if self.center is None:
+            return False
+
+        angle_rad = np.radians(-self.angle)
+        cos_a = np.cos(angle_rad)
+        sin_a = np.sin(angle_rad)
+
+        local_x = (x - self.center[0]) * cos_a - (y - self.center[1]) * sin_a
+        local_y = (x - self.center[0]) * sin_a + (y - self.center[1]) * cos_a
+
+        return abs(local_x) <= self.width / 2 and abs(local_y) <= self.height / 2
+
+    def clear(self):
+        """Clear the rectangle and handles, allow new selection"""
+        if self.rectangle:
+            try:
+                self.rectangle.remove()
+            except (ValueError, AttributeError):
+                pass
+            self.rectangle = None
+
+        for handle in self.resize_handles:
+            try:
+                handle.remove()
+            except (ValueError, AttributeError):
+                pass
+        self.resize_handles = []
+
+        if self.rotation_handle:
+            try:
+                self.rotation_handle.remove()
+            except (ValueError, AttributeError):
+                pass
+            self.rotation_handle = None
+
+        if self.angle_text:
+            try:
+                self.angle_text.remove()
+            except (ValueError, AttributeError):
+                pass
+            self.angle_text = None
+
+        # Reset state to allow new selection
+        self.center = None
+        self.width = None
+        self.height = None
+        self.angle = 0
+        self.active = False
+        self.dragging = False
+        self.rotating = False
+        self.resizing = False
+        self.drag_start = None
+
+        self.ax.figure.canvas.draw_idle()
+
+    def disconnect(self):
+        """Disconnect event handlers"""
+        try:
+            self.ax.figure.canvas.mpl_disconnect(self.cid_press)
+            self.ax.figure.canvas.mpl_disconnect(self.cid_release)
+            self.ax.figure.canvas.mpl_disconnect(self.cid_motion)
+            self.ax.figure.canvas.mpl_disconnect(self.cid_scroll)
+        except (ValueError, AttributeError):
+            pass
 
 
 def open_eels_window(parent):
