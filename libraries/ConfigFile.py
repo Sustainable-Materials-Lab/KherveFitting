@@ -35,75 +35,6 @@ def add_core_level_Data(Data, window, file_path, sheet_name):
         df = pd.read_excel(file_path, sheet_name=sheet_name, header=None)
 
         # ========== Handle EDX~Plot sheets ==========
-        if sheet_name == 'EDX~Plot' or sheet_name.startswith('EDX~Plot'):
-            be_values = []
-            raw_data = []
-
-            for index, row in df.iterrows():
-                if index == 0:
-                    continue
-
-                be_val = row.iloc[0]
-                raw_val = row.iloc[1]
-
-                if pd.isna(be_val) or pd.isna(raw_val):
-                    continue
-
-                try:
-                    be_values.append(float(be_val))
-                    raw_data.append(float(raw_val))
-                except (ValueError, TypeError):
-                    continue
-
-            core_level = {
-                'Name': sheet_name,
-                'B.E.': be_values,
-                'Raw Data': raw_data,
-                '_EDX_display_max': 20,
-                '_EDX_type': 'plot',
-                'Background': {
-                    'Bkg Type': '',
-                    'Bkg Low': '',
-                    'Bkg High': '',
-                    'Bkg Offset Low': '',
-                    'Bkg Offset High': '',
-                    'Bkg X': be_values.copy(),
-                    'Bkg Y': raw_data.copy()
-                }
-            }
-
-            Data['Core levels'][sheet_name] = core_level
-            return Data
-
-        # ========== Handle EDX~Map sheets ==========
-        if sheet_name == 'EDX~Map':
-            # For EDX~Map, just store metadata - actual map will be loaded from HDF5
-            energy_range = None
-
-            for index, row in df.iterrows():
-                if index == 0:
-                    header_text = str(row.iloc[0])
-                    if 'Range:' in header_text:
-                        energy_range = header_text.split('Range:')[1].strip()
-                    break  # Only need the header
-
-            # Determine HDF5 file path
-            hdf5_path = file_path.replace('_EDX.xlsx', '_EDX.hdf5')
-            if not os.path.exists(hdf5_path):
-                hdf5_path = file_path.replace('_EDX.xlsx', '.hdf5')
-            if not os.path.exists(hdf5_path):
-                hdf5_path = file_path.replace('_EDX.xlsx', '.h5')
-
-            core_level = {
-                'Name': sheet_name,
-                'Energy_Range': energy_range if energy_range else 'N/A',
-                '_EDX_type': 'map'
-            }
-
-            Data['Core levels'][sheet_name] = core_level
-            return Data
-
-        # ========== Handle EELS~Plot sheets ==========
         if sheet_name == 'EELS~Plot' or sheet_name.startswith('EELS~Plot'):
             be_values = []
             raw_data = []
@@ -124,6 +55,7 @@ def add_core_level_Data(Data, window, file_path, sheet_name):
                 except (ValueError, TypeError):
                     continue
 
+            # Create complete Background structure with all required keys
             core_level = {
                 'Name': sheet_name,
                 'B.E.': be_values,
@@ -135,15 +67,15 @@ def add_core_level_Data(Data, window, file_path, sheet_name):
                     'Bkg High': '',
                     'Bkg Offset Low': '',
                     'Bkg Offset High': '',
-                    'Bkg X': be_values.copy(),
-                    'Bkg Y': raw_data.copy()
+                    'Bkg X': be_values.copy() if be_values else [],
+                    'Bkg Y': raw_data.copy() if raw_data else []
                 }
             }
 
             Data['Core levels'][sheet_name] = core_level
             return Data
 
-        # ========== Handle EELS~Map sheets ==========
+            # ========== Handle EELS~Map sheets ==========
         if sheet_name == 'EELS~Map':
             # For EELS~Map, just store metadata - actual map will be loaded from DM3
             energy_range = None
@@ -155,17 +87,61 @@ def add_core_level_Data(Data, window, file_path, sheet_name):
                         energy_range = header_text.split('Range:')[1].strip()
                     break  # Only need the header
 
-            # DM3 file is in same directory with same base name
-            # e.g., filename_EELS.xlsx -> filename.dm3 or filename.dm4
-            dm3_path = file_path.replace('_EELS.xlsx', '.dm3')
-            if not os.path.exists(dm3_path):
-                dm3_path = file_path.replace('_EELS.xlsx', '.dm4')
+            # Find DM3/DM4 file - try multiple naming patterns
+            dm3_path = None
+            base_dir = os.path.dirname(file_path)
+            base_name = os.path.basename(file_path)
+
+            # Pattern 1: filename_EELS.xlsx -> filename_EELS.dm3
+            test_path = file_path.replace('.xlsx', '.dm3')
+            if os.path.exists(test_path):
+                dm3_path = test_path
+
+            # Pattern 2: filename_EELS.xlsx -> filename_EELS.dm4
+            if not dm3_path:
+                test_path = file_path.replace('.xlsx', '.dm4')
+                if os.path.exists(test_path):
+                    dm3_path = test_path
+
+            # Pattern 3: filename_EELS.xlsx -> filename.dm3 (original file without _EELS)
+            if not dm3_path:
+                test_path = file_path.replace('_EELS.xlsx', '.dm3')
+                if os.path.exists(test_path):
+                    dm3_path = test_path
+
+            # Pattern 4: filename_EELS.xlsx -> filename.dm4 (original file without _EELS)
+            if not dm3_path:
+                test_path = file_path.replace('_EELS.xlsx', '.dm4')
+                if os.path.exists(test_path):
+                    dm3_path = test_path
+
+            # Pattern 5: Look for any .dm3 or .dm4 file with similar base name in same directory
+            if not dm3_path:
+                # Get base name without _EELS suffix
+                name_without_eels = base_name.replace('_EELS.xlsx', '')
+                for ext in ['.dm3', '.dm4']:
+                    # Try exact match
+                    test_path = os.path.join(base_dir, name_without_eels + ext)
+                    if os.path.exists(test_path):
+                        dm3_path = test_path
+                        break
+                    # Try with any suffix pattern
+                    import glob
+                    pattern = os.path.join(base_dir, name_without_eels + '*' + ext)
+                    matches = glob.glob(pattern)
+                    if matches:
+                        dm3_path = matches[0]
+                        break
+
+            print(f"EELS~Map: Looking for DM3/DM4 file")
+            print(f"  Excel path: {file_path}")
+            print(f"  Found DM3 path: {dm3_path}")
 
             core_level = {
                 'Name': sheet_name,
                 'Energy_Range': energy_range if energy_range else 'N/A',
                 '_EELS_type': 'map',
-                '_DM3_Path': dm3_path if os.path.exists(dm3_path) else None
+                '_DM3_Path': dm3_path
             }
 
             Data['Core levels'][sheet_name] = core_level

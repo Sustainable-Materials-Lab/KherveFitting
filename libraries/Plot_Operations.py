@@ -1127,7 +1127,7 @@ class PlotManager:
             self.ax.clear()
 
             # Reset background to white for non-EDX plots
-            if not (sheet_name == 'EDX~Plot' or sheet_name.startswith('EDX~Plot')):
+            if not (sheet_name == 'EDX~Plot' or sheet_name.startswith('EDX~Plot') or sheet_name.startswith('EELS~Plot')):
                 self.figure.patch.set_facecolor('white')
                 self.ax.set_facecolor('white')
                 # Reset spines to black
@@ -1646,6 +1646,62 @@ class PlotManager:
 
         if sheet_name not in window.Data['Core levels']:
             wx.MessageBox(f"No data available for sheet: {sheet_name}", "Error", wx.OK | wx.ICON_ERROR)
+            return
+
+        if sheet_name == 'EDX~Map':
+            print(f"Detected EDX Map sheet: {sheet_name}")
+            self.ax.clear()
+            self.ax.text(0.5, 0.5, 'EDX Map\n\nOpen EDX Analysis window\nto view the map',
+                         ha='center', va='center', transform=self.ax.transAxes,
+                         fontsize=12, color='gray')
+            self.ax.set_xticks([])
+            self.ax.set_yticks([])
+            self.canvas.draw_idle()
+            return
+
+        if sheet_name == 'EELS~Map':
+            print(f"Detected EELS Map sheet: {sheet_name}")
+            # Try to open EELS window with the map
+            dm3_path = window.Data['Core levels'].get('EELS~Map', {}).get('_DM3_Path')
+            print(f"DM3 path from Data: {dm3_path}")
+
+            # If no path stored, try to find the DM3 file based on Excel filename
+            if not dm3_path or not os.path.exists(str(dm3_path) if dm3_path else ''):
+                excel_path = window.Data.get('FilePath', '')
+                if excel_path:
+                    # Try various naming patterns
+                    for pattern in ['.dm3', '.dm4', '_EELS.dm3', '_EELS.dm4']:
+                        test_path = excel_path.replace('_EELS.xlsx', pattern).replace('.xlsx', pattern)
+                        if os.path.exists(test_path):
+                            dm3_path = test_path
+                            print(f"Found DM3 file: {dm3_path}")
+                            break
+
+            if dm3_path and os.path.exists(str(dm3_path)):
+                try:
+                    if hasattr(window, 'eels_window') and window.eels_window:
+                        window.eels_window.load_file(dm3_path)
+                        window.eels_window.Show()
+                        window.eels_window.Raise()
+                    else:
+                        from libraries.ToolsMenu.EELS_Analysis import open_eels_window
+                        eels_window = open_eels_window(window)
+                        if eels_window:
+                            window.eels_window = eels_window
+                            eels_window.load_file(dm3_path)
+                except Exception as e:
+                    print(f"Error opening EELS window: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+            # Show placeholder in main plot
+            self.ax.clear()
+            self.ax.text(0.5, 0.5, 'EELS Map\n\nOpen EELS Analysis window\nto view the map',
+                         ha='center', va='center', transform=self.ax.transAxes,
+                         fontsize=12, color='gray')
+            self.ax.set_xticks([])
+            self.ax.set_yticks([])
+            self.canvas.draw_idle()
             return
 
         # CHECK IF THIS IS A PROFILE SHEET - if so, use profile plotting

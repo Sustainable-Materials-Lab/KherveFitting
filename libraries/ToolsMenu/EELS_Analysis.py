@@ -87,6 +87,55 @@ class EELSWindow(wx.Frame):
         self.map_ax = self.map_figure.add_subplot(111)
 
         map_sizer.Add(self.map_canvas, 1, wx.EXPAND)
+
+        # ========== Arrow control panel (like EDX) ==========
+        arrow_panel = wx.Panel(map_panel)
+        arrow_panel.SetBackgroundColour(wx.Colour(240, 240, 240, 200))
+        arrow_sizer = wx.GridBagSizer(0, 0)
+
+        btn_size = (30, 30)
+        btn_size_wide = (60, 30)
+
+        # Row 0: Up button spanning 2 columns
+        self.arrow_up_btn = wx.Button(arrow_panel, label="↑", size=btn_size_wide)
+        self.arrow_up_btn.SetFont(wx.Font(14, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        arrow_sizer.Add(self.arrow_up_btn, pos=(0, 0), span=(1, 2), flag=wx.ALIGN_CENTER)
+
+        # Row 1: Left and Right buttons
+        self.arrow_left_btn = wx.Button(arrow_panel, label="←", size=btn_size)
+        self.arrow_left_btn.SetFont(wx.Font(14, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        arrow_sizer.Add(self.arrow_left_btn, pos=(1, 0), flag=wx.ALIGN_CENTER)
+
+        self.arrow_right_btn = wx.Button(arrow_panel, label="→", size=btn_size)
+        self.arrow_right_btn.SetFont(wx.Font(14, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        arrow_sizer.Add(self.arrow_right_btn, pos=(1, 1), flag=wx.ALIGN_CENTER)
+
+        # Row 2: Down button spanning 2 columns
+        self.arrow_down_btn = wx.Button(arrow_panel, label="↓", size=btn_size_wide)
+        self.arrow_down_btn.SetFont(wx.Font(14, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        arrow_sizer.Add(self.arrow_down_btn, pos=(2, 0), span=(1, 2), flag=wx.ALIGN_CENTER)
+
+        arrow_panel.SetSizer(arrow_sizer)
+        arrow_panel.Fit()
+
+        # Store reference for positioning later
+        self.arrow_control_panel = arrow_panel
+
+        # Set map panel sizer
+        map_panel.SetSizer(map_sizer)
+
+        # Bind arrow button events
+        self.arrow_up_btn.Bind(wx.EVT_BUTTON, lambda e: self.on_arrow_move('up'))
+        self.arrow_down_btn.Bind(wx.EVT_BUTTON, lambda e: self.on_arrow_move('down'))
+        self.arrow_left_btn.Bind(wx.EVT_BUTTON, lambda e: self.on_arrow_move('left'))
+        self.arrow_right_btn.Bind(wx.EVT_BUTTON, lambda e: self.on_arrow_move('right'))
+
+        # Bind size event to reposition arrow panel
+        map_panel.Bind(wx.EVT_SIZE, self.on_map_panel_resize)
+
+        # Bind paint event to keep buttons visible
+        self.map_canvas.Bind(wx.EVT_PAINT, self.on_canvas_paint)
+
         map_panel.SetSizer(map_sizer)
 
         main_sizer.Add(map_panel, 1, wx.EXPAND)
@@ -541,6 +590,278 @@ class EELSWindow(wx.Frame):
 
         self.map_canvas.draw()
 
+    # ==================== ARROW MOVEMENT ====================
+
+    def on_map_panel_resize(self, event):
+        """Position arrow control panel on bottom-left of map canvas"""
+        if hasattr(self, 'arrow_control_panel') and self.arrow_control_panel:
+            # Get canvas size and position
+            canvas_rect = self.map_canvas.GetRect()
+
+            # Get arrow panel size
+            arrow_size = self.arrow_control_panel.GetBestSize()
+
+            # Position on bottom-left with 10px margins
+            x = canvas_rect.x
+            y = canvas_rect.y + canvas_rect.height - arrow_size.height
+
+            self.arrow_control_panel.SetPosition((x, y))
+            self.arrow_control_panel.SetSize(arrow_size)
+            self.arrow_control_panel.Raise()
+            self.arrow_control_panel.Show()
+
+        event.Skip()
+
+    def on_canvas_paint(self, event):
+        """Keep arrow buttons visible when canvas redraws"""
+        event.Skip()
+        if hasattr(self, 'arrow_control_panel') and self.arrow_control_panel:
+            wx.CallLater(10, self._reposition_arrow_panel)
+
+    def _reposition_arrow_panel(self):
+        """Helper to reposition arrow panel"""
+        if hasattr(self, 'arrow_control_panel') and self.arrow_control_panel:
+            canvas_rect = self.map_canvas.GetRect()
+            arrow_size = self.arrow_control_panel.GetBestSize()
+
+            x = canvas_rect.x
+            y = canvas_rect.y + canvas_rect.height - arrow_size.height
+
+            self.arrow_control_panel.SetPosition((x, y))
+            self.arrow_control_panel.Show()
+            self.arrow_control_panel.Raise()
+            self.arrow_control_panel.Refresh()
+            self.arrow_control_panel.Update()
+
+    def on_arrow_move(self, direction):
+        """Handle arrow button clicks to move selected elements"""
+        if self.current_data is None:
+            return
+
+        # Get the actual data array
+        if hasattr(self.current_data, 'data'):
+            data_array = self.current_data.data
+        else:
+            data_array = self.current_data
+
+        # If nothing is selected, return
+        if (not self.selected_points and
+            not self.line_start and
+            not (hasattr(self, 'rotatable_rect') and self.rotatable_rect and self.rotatable_rect.center is not None) and
+            not self.selected_areas):
+            return
+
+        # Get plot dimensions for calculating movement step (0.5% of dimension)
+        height, width = data_array.shape[:2]
+        step_x = max(1, int(width * 0.005))
+        step_y = max(1, int(height * 0.005))
+
+        # Determine movement direction
+        dx, dy = 0, 0
+        if direction == 'left':
+            dx = -step_x
+        elif direction == 'right':
+            dx = step_x
+        elif direction == 'up':
+            dy = -step_y
+        elif direction == 'down':
+            dy = step_y
+
+        moved = False
+
+        # Move selected points
+        if self.selected_points:
+            moved = self._move_and_replot_point(dx, dy, width, height)
+
+        # Move selected lines
+        elif self.line_start and self.line_end:
+            moved = self._move_and_replot_line(dx, dy, width, height)
+
+        # Move rotatable rectangle
+        elif hasattr(self, 'rotatable_rect') and self.rotatable_rect and self.rotatable_rect.center is not None:
+            moved = self._move_and_replot_rotated(dx, dy, width, height)
+
+        # Move selected areas
+        elif self.selected_areas:
+            moved = self._move_and_replot_area(dx, dy, width, height)
+
+        if moved:
+            print(f"Moved selection by ({dx}, {dy})")
+
+    def _move_and_replot_point(self, dx, dy, width, height):
+        """Move point and replot"""
+        if not self.selected_points:
+            return False
+
+        new_points = []
+        for point in self.selected_points:
+            if len(point) == 3:
+                x, y, size = point
+            else:
+                x, y = point
+                size = 1
+
+            new_x = int(np.clip(x + dx, 0, width - 1))
+            new_y = int(np.clip(y + dy, 0, height - 1))
+            new_points.append((new_x, new_y, size))
+
+        self.selected_points = new_points
+
+        # Redraw marker (red)
+        self.clear_selection_markers()
+        point = self.selected_points[-1]
+        x, y, size = point
+
+        if size == 1:
+            marker, = self.map_ax.plot(x, y, 'r+', markersize=15, markeredgewidth=2)
+            marker._is_selection_marker = True
+        else:
+            from matplotlib.patches import Rectangle
+            half_size = size / 2
+            rect = Rectangle((x - half_size, y - half_size), size, size,
+                             linewidth=2, edgecolor='darkred', facecolor='red', alpha=0.3)
+            rect._is_selection_marker = True
+            self.map_ax.add_patch(rect)
+
+        self.map_canvas.draw()
+        self.map_canvas.Refresh()
+
+        # Replot spectrum
+        self.plot_point_spectrum(x, y)
+
+        # Keep arrow buttons visible
+        wx.CallLater(10, self._reposition_arrow_panel)
+
+        return True
+
+    def _move_and_replot_line(self, dx, dy, width, height):
+        """Move line and replot"""
+        if not self.line_start or not self.line_end:
+            return False
+
+        x1, y1 = self.line_start
+        x2, y2 = self.line_end
+
+        # Move both endpoints
+        new_x1 = int(np.clip(x1 + dx, 0, width - 1))
+        new_y1 = int(np.clip(y1 + dy, 0, height - 1))
+        new_x2 = int(np.clip(x2 + dx, 0, width - 1))
+        new_y2 = int(np.clip(y2 + dy, 0, height - 1))
+
+        self.line_start = (new_x1, new_y1)
+        self.line_end = (new_x2, new_y2)
+
+        # Redraw markers (red)
+        self.clear_selection_markers()
+
+        line, = self.map_ax.plot([new_x1, new_x2], [new_y1, new_y2], 'r-', linewidth=2)
+        line._is_selection_marker = True
+
+        marker1, = self.map_ax.plot(new_x1, new_y1, 'ro', markersize=8, markeredgecolor='darkred', markeredgewidth=2)
+        marker1._is_selection_marker = True
+        marker2, = self.map_ax.plot(new_x2, new_y2, 'ro', markersize=8, markeredgecolor='darkred', markeredgewidth=2)
+        marker2._is_selection_marker = True
+
+        self.map_canvas.draw()
+
+        # Keep arrow buttons visible
+        if hasattr(self, 'arrow_control_panel'):
+            self.arrow_control_panel.Raise()
+
+        # Replot spectrum
+        self.plot_line_spectrum(new_x1, new_y1, new_x2, new_y2)
+
+        return True
+
+    def _move_and_replot_area(self, dx, dy, width, height):
+        """Move area and replot"""
+        if not self.selected_areas:
+            return False
+
+        area = self.selected_areas[-1]
+
+        # Check if it's a rotated area (5 elements) or standard area (4 elements)
+        if len(area) == 5:
+            # Rotated area: (cx, cy, w, h, angle)
+            cx, cy, w, h, angle = area
+            new_cx = float(np.clip(cx + dx, 0, width - 1))
+            new_cy = float(np.clip(cy + dy, 0, height - 1))
+            self.selected_areas[-1] = (new_cx, new_cy, w, h, angle)
+
+            # Update rotatable rectangle if exists
+            if hasattr(self, 'rotatable_rect') and self.rotatable_rect:
+                self.rotatable_rect.center = (new_cx, new_cy)
+                self.rotatable_rect.draw_rectangle()
+        else:
+            # Standard area: (x1, y1, x2, y2)
+            x1, y1, x2, y2 = area
+            rect_width = x2 - x1
+            rect_height = y2 - y1
+
+            new_x1 = int(np.clip(x1 + dx, 0, width - rect_width))
+            new_y1 = int(np.clip(y1 + dy, 0, height - rect_height))
+            new_x2 = new_x1 + rect_width
+            new_y2 = new_y1 + rect_height
+
+            self.selected_areas[-1] = (new_x1, new_y1, new_x2, new_y2)
+
+            # Redraw marker (red)
+            self.clear_selection_markers()
+
+            from matplotlib.patches import Rectangle
+            rect = Rectangle((new_x1, new_y1), rect_width, rect_height,
+                             linewidth=2, edgecolor='red', facecolor='red', alpha=0.2)
+            rect._is_selection_marker = True
+            self.map_ax.add_patch(rect)
+
+            self.map_canvas.draw()
+
+            # Replot spectrum
+            self.plot_area_spectrum(new_x1, new_y1, new_x2, new_y2)
+
+        # Keep arrow buttons visible
+        if hasattr(self, 'arrow_control_panel'):
+            self.arrow_control_panel.Raise()
+
+        return True
+
+    def _move_and_replot_rotated(self, dx, dy, width, height):
+        """Move rotatable rectangle and replot"""
+        if not hasattr(self, 'rotatable_rect') or not self.rotatable_rect:
+            return False
+
+        if self.rotatable_rect.center is None:
+            return False
+
+        # Get current center
+        cx, cy = self.rotatable_rect.center
+
+        # Calculate new center with boundary checking
+        new_cx = float(np.clip(cx + dx, 0, width - 1))
+        new_cy = float(np.clip(cy + dy, 0, height - 1))
+
+        # Update center
+        self.rotatable_rect.center = (new_cx, new_cy)
+
+        # Redraw the rectangle
+        self.rotatable_rect.draw_rectangle()
+
+        self.map_canvas.draw()
+
+        # Keep arrow buttons visible
+        if hasattr(self, 'arrow_control_panel'):
+            self.arrow_control_panel.Raise()
+
+        # Replot spectrum for rotated area
+        self.on_rotated_area_complete(
+            (new_cx, new_cy),
+            self.rotatable_rect.width,
+            self.rotatable_rect.height,
+            self.rotatable_rect.angle
+        )
+
+        return True
+
     def on_intensity_map(self, event):
         """Show intensity map"""
         if self.current_data is None:
@@ -933,13 +1254,26 @@ class EELSWindow(wx.Frame):
         elif sel_type:
             selection_info['type'] = sel_type
 
-        # Store data in B.E./Raw Data format for compatibility
+        # Convert to lists with proper formatting
+        energy_list = [float(f"{v:.2f}") for v in energy]
+        spectrum_list = [float(f"{v:.2f}") for v in spectrum]
+
+        # Store data in B.E./Raw Data format for compatibility - WITH COMPLETE Background
         self.parent.Data['Core levels']['EELS~Plot'] = {
             'Name': 'EELS~Plot',
-            'B.E.': [float(f"{v:.2f}") for v in energy],
-            'Raw Data': [float(f"{v:.2f}") for v in spectrum],
+            'B.E.': energy_list,
+            'Raw Data': spectrum_list,
             '_EELS_selection': selection_info,
-            '_EELS_type': 'plot'
+            '_EELS_type': 'plot',
+            'Background': {
+                'Bkg Type': '',
+                'Bkg Low': '',
+                'Bkg High': '',
+                'Bkg Offset Low': '',
+                'Bkg Offset High': '',
+                'Bkg X': energy_list.copy(),
+                'Bkg Y': spectrum_list.copy()
+            }
         }
 
         # Update sheet combobox
@@ -986,7 +1320,17 @@ class EELSWindow(wx.Frame):
 
         if hasattr(self.current_data, 'axes_manager'):
             if len(self.current_data.axes_manager.signal_axes) > 0:
-                return self.current_data.axes_manager.signal_axes[0].axis
+                signal_axis = self.current_data.axes_manager.signal_axes[0]
+
+                # For EELS, if offset is very negative (like -6250), ignore it
+                # This typically means the calibration is for the absolute energy position
+                # but we want to display energy loss starting from 0
+                if signal_axis.offset < -1000:
+                    print(f"EELS: Ignoring large negative offset ({signal_axis.offset:.1f} eV)")
+                    print(f"  Displaying energy loss from 0 to {signal_axis.size * signal_axis.scale:.1f} eV")
+                    return signal_axis.axis_no_offset
+
+                return signal_axis.axis
 
         # Fallback: create channel numbers
         if len(self.current_data.data.shape) == 3:
@@ -1569,17 +1913,29 @@ class EELSWindow(wx.Frame):
         energy = line.get_xdata()
         intensity = line.get_ydata()
 
-        # Create sheet data - USE SAME STRUCTURE AS XPS SHEETS
+        # Convert to lists with proper formatting
+        energy_list = [float(f"{v:.2f}") for v in energy]
+        intensity_list = [float(f"{v:.2f}") for v in intensity]
+
+        # Create sheet data - USE SAME STRUCTURE AS XPS SHEETS with complete Background
         import datetime
         import json
         sheet_data = {
             'Name': sheet_name,
-            'B.E.': [float(f"{v:.2f}") for v in energy],
-            'Raw Data': [float(f"{v:.2f}") for v in intensity],
+            'B.E.': energy_list,
+            'Raw Data': intensity_list,
             '_EELS_type': 'plot',
             '_EELS_selection': selection_info,
             '_EELS_save_time': datetime.datetime.now().isoformat(),
-            'Background': {}
+            'Background': {
+                'Bkg Type': '',
+                'Bkg Low': '',
+                'Bkg High': '',
+                'Bkg Offset Low': '',
+                'Bkg Offset High': '',
+                'Bkg X': energy_list.copy(),
+                'Bkg Y': intensity_list.copy()
+            }
         }
 
         # Save to parent Data

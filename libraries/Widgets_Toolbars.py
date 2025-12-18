@@ -2967,6 +2967,16 @@ def import_eels_map_file(window):
         if hasattr(window, 'Working_directory'):
             window.Working_directory = os.path.dirname(excel_path)
 
+        # Copy DM3/DM4 file with _EELS suffix (like EDX does with HDF5)
+        dm3_copy_path = os.path.join(os.path.dirname(file_path), f"{base_name}_EELS.dm3")
+        if file_path.lower().endswith('.dm3'):
+            shutil.copy2(file_path, dm3_copy_path)
+            print(f"DM3 copy saved to: {dm3_copy_path}")
+        elif file_path.lower().endswith('.dm4'):
+            dm3_copy_path = os.path.join(os.path.dirname(file_path), f"{base_name}_EELS.dm4")
+            shutil.copy2(file_path, dm3_copy_path)
+            print(f"DM4 copy saved to: {dm3_copy_path}")
+
         # Create workbook
         wb = openpyxl.Workbook()
         wb.remove(wb.active)

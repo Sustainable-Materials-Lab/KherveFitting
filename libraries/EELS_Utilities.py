@@ -33,8 +33,13 @@ class Axis:
 
     @property
     def axis(self) -> np.ndarray:
-        """Generate axis values"""
+        """Generate axis values using offset"""
         return np.arange(self.size) * self.scale + self.offset
+
+    @property
+    def axis_no_offset(self) -> np.ndarray:
+        """Generate axis values starting from 0 (ignore offset)"""
+        return np.arange(self.size) * self.scale
 
 
 class AxesManager:

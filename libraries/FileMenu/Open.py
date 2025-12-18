@@ -4199,7 +4199,7 @@ def open_xlsx_file(window, file_path=None):
             edx_valid = ('ENERGY' in col1_value and 'KEV' in col1_value) and 'INTENSITY' in col2_value
 
             # Also accept ELLS-style headers (ENERGY (KEV))
-            eels_valid = ('ENERGY' in col1_value and 'KEV' in col1_value) and 'INTENSITY' in col2_value
+            eels_valid = ('ENERGY' in col1_value) and ('EV' in col1_value or 'LOSS' in col1_value) and 'INTENSITY' in col2_value
 
             if not (xps_valid or raman_valid or xas_valid or edx_valid or eels_valid):
                 console_frame.Close()
