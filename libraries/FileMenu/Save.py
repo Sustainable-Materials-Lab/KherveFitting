@@ -1400,8 +1400,8 @@ def refresh_sheets(window, on_sheet_selected_func, update_console=None, reopen_f
                 new_name = 'Survey'
             elif 'survey scan' in lower_name:
                 new_name = 'Survey'
-            elif 'xps' in lower_name:
-                new_name = 'Survey'
+            # elif 'xps' in lower_name:
+            #     new_name = 'Survey'
             elif 'wide' in lower_name:
                 new_name = 'Wide'
             elif 'wide scan' in lower_name:

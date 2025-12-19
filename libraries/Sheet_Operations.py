@@ -77,6 +77,31 @@ def on_sheet_selected(window, event):
                 window._processing_eels_sheet = False
             return
 
+        # Check if this is an XPS~Map sheet
+        if selected_sheet.startswith('XPS~Map'):
+            # Prevent re-entry loop
+            if hasattr(window, '_processing_xps_map') and window._processing_xps_map:
+                return
+            window._processing_xps_map = True
+            try:
+                # Check if window already open
+                if hasattr(window, 'scienta_map_window') and window.scienta_map_window:
+                    try:
+                        if not window.scienta_map_window.IsBeingDeleted():
+                            window.scienta_map_window.Raise()
+                            return
+                    except:
+                        pass
+
+                # Open new map viewer
+                from libraries.ViewMenu.ScientaMapViewer import open_scienta_map_viewer
+                map_window = open_scienta_map_viewer(window, selected_sheet)
+                if map_window:
+                    window.scienta_map_window = map_window
+            finally:
+                window._processing_xps_map = False
+            return
+
         # Reinitialize peak count
         window.peak_count = 0
         window.bg_min_energy = None

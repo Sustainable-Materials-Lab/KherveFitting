@@ -268,15 +268,12 @@ class ScientaMapPreviewWindow(wx.Frame):
     def __init__(self, parent, parsed_data, callback_on_import):
         # Calculate window size
         num_regions = len(parsed_data['regions'])
-        cols = 4
+        cols = 3
         rows = (num_regions + cols - 1) // cols
 
         # Fixed window size with scrolling
-        width = min(2000, 360 * cols)
-        height = min(1000, 320 * rows + 120)
-        # width = 1000
-        # height = 650
-
+        width = min(2000, 360 * cols + 50)
+        height = min(1000, 320 * 2 + 120)
 
         super().__init__(parent, title=f"Scienta Map Preview - {os.path.basename(parsed_data['file_path'])}",
                         size=(width, height), style=wx.DEFAULT_FRAME_STYLE)
@@ -347,6 +344,13 @@ class ScientaMapPreviewWindow(wx.Frame):
         self.bin_btn.Bind(wx.EVT_BUTTON, self.on_bin_import)
         control_sizer.Add(self.bin_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 3)
 
+        control_sizer.AddSpacer(15)
+
+        # Checkbox for saving maps
+        self.save_maps_checkbox = wx.CheckBox(control_panel, label="Save Maps")
+        self.save_maps_checkbox.SetValue(False)  # Default: do not save maps
+        control_sizer.Add(self.save_maps_checkbox, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 3)
+
         control_sizer.AddStretchSpacer()
 
         # Status text
@@ -373,15 +377,12 @@ class ScientaMapPreviewWindow(wx.Frame):
 
         # Create figure for heatmaps
         num_regions = len(self.regions)
-        cols = 4
+        cols = 3
         rows = (num_regions + cols - 1) // cols
 
         # Calculate figure size based on number of rows
-        # fig_height = max(3, rows * 2.2)
-        # fig_width = 12
         fig_height = max(2, rows * 3.2)
-        fig_width = min(12, cols * 3.6)
-
+        fig_width = cols * 3.6
 
         self.figure = Figure(figsize=(fig_width, fig_height), dpi=100)
         self.canvas = FigureCanvas(self.scroll_panel, -1, self.figure)
@@ -414,7 +415,7 @@ class ScientaMapPreviewWindow(wx.Frame):
         self.sweep_lines = []
 
         num_regions = len(self.regions)
-        cols = 4
+        cols = 3
         rows = (num_regions + cols - 1) // cols
 
         for idx, region in enumerate(self.regions):
@@ -513,13 +514,14 @@ class ScientaMapPreviewWindow(wx.Frame):
     def on_bin_import(self, event):
         """Bin sweeps into N groups and import."""
         num_bins = self.bin_spin.GetValue()
+        save_maps = self.save_maps_checkbox.GetValue()
 
         binned_data = {
             'file_path': self.parsed_data['file_path'],
             'regions': [],
             'bin_mode': True,
             'num_bins': num_bins,
-            'save_maps': True
+            'save_maps': save_maps
         }
 
         for region in self.regions:
@@ -583,11 +585,13 @@ class ScientaMapPreviewWindow(wx.Frame):
 
     def on_sum_sweeps(self, event):
         """Sum all remaining sweeps and trigger import."""
+        save_maps = self.save_maps_checkbox.GetValue()
+
         summed_data = {
             'file_path': self.parsed_data['file_path'],
             'regions': [],
             'bin_mode': False,
-            'save_maps': True
+            'save_maps': save_maps
         }
 
         for region in self.regions:
@@ -859,18 +863,24 @@ def finalize_scienta_import(window, import_data):
 
             # Save map data if available
             if save_maps and region.get('data_2d') is not None:
-                map_sheet_name = f"zzMap~{sheet_base}"
+                # Use XPS~Map naming: XPS~Map, XPS~Map1, XPS~Map2, etc.
+                if len(map_sheet_names) == 0:
+                    map_sheet_name = "XPS~Map"
+                else:
+                    map_sheet_name = f"XPS~Map{len(map_sheet_names)}"
+
+                # Ensure unique
                 base_map_name = map_sheet_name
-                counter = 1
+                counter = len(map_sheet_names) + 1
                 while map_sheet_name in sheet_names or map_sheet_name in map_sheet_names:
-                    map_sheet_name = f"zzMap~{sheet_base}{counter}"
+                    map_sheet_name = f"XPS~Map{counter}"
                     counter += 1
 
                 map_sheet_names.append(map_sheet_name)
                 update_console(f"  Creating map sheet: {map_sheet_name}")
 
                 ws_map = wb.create_sheet(map_sheet_name)
-                write_map_sheet_data(ws_map, region, map_sheet_name)
+                write_map_sheet_data(ws_map, region, map_sheet_name, sheet_base)
 
         update_console(f"Saving Excel file...")
         wb.save(excel_path)
@@ -902,7 +912,8 @@ def finalize_scienta_import(window, import_data):
             if save_maps and region.get('data_2d') is not None:
                 if map_idx < len(map_sheet_names):
                     map_sheet_name = map_sheet_names[map_idx]
-                    add_map_to_data(window.Data, region, map_sheet_name)
+                    sheet_base, _ = clean_region_name(region['name'])
+                    add_map_to_data(window.Data, region, map_sheet_name, sheet_base)
                     update_console(f"  Imported map: {map_sheet_name}")
                     map_idx += 1
 
@@ -1005,7 +1016,7 @@ def write_sheet_data(ws, region, intensities, sheet_name, bin_idx=None, bin_indi
     ws.column_dimensions[openpyxl.utils.get_column_letter(exp_col + 1)].width = 40
 
 
-def write_map_sheet_data(ws, region, map_sheet_name):
+def write_map_sheet_data(ws, region, map_sheet_name, core_level_name=None):
     """Write map data to an Excel worksheet."""
     be_values = region['be_values']
     data_2d = region['data_2d']
@@ -1032,6 +1043,7 @@ def write_map_sheet_data(ws, region, map_sheet_name):
         'Sample ID': metadata.get('Sample', ''),
         'Spectrum Name': metadata.get('Spectrum Name', ''),
         'Region Name': region['name'],
+        'Core Level': core_level_name or '',
         'Map Sheet Name': map_sheet_name,
         'Instrument': metadata.get('Instrument', ''),
         'Location': metadata.get('Location', ''),
@@ -1059,11 +1071,15 @@ def write_map_sheet_data(ws, region, map_sheet_name):
     ws.column_dimensions[openpyxl.utils.get_column_letter(exp_col + 1)].width = 40
 
 
-def add_map_to_data(Data, region, map_sheet_name):
+def add_map_to_data(Data, region, map_sheet_name, core_level_name=None):
     """Add map data to window.Data structure."""
     be_values = region['be_values']
     data_2d = region['data_2d']
     num_sweeps = data_2d.shape[0]
+
+    # Get the core level name from the region if not provided
+    if core_level_name is None:
+        core_level_name, _ = clean_region_name(region['name'])
 
     # Create the data structure similar to standard core levels
     map_data = {
@@ -1071,6 +1087,7 @@ def add_map_to_data(Data, region, map_sheet_name):
         'B.E.': [round(float(be), 2) for be in be_values],
         '_Map_type': 'scienta',
         '_num_sweeps': num_sweeps,
+        '_core_level': core_level_name,
     }
 
     # Add Y columns: Y1, Y2, Y3, ...
@@ -1084,6 +1101,7 @@ def add_map_to_data(Data, region, map_sheet_name):
         'Sample ID': metadata.get('Sample', ''),
         'Spectrum Name': metadata.get('Spectrum Name', ''),
         'Region Name': region['name'],
+        'Core Level': core_level_name,
         'Map Sheet Name': map_sheet_name,
         'Instrument': metadata.get('Instrument', ''),
         'Location': metadata.get('Location', ''),

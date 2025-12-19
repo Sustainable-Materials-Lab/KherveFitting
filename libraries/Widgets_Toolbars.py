@@ -1971,6 +1971,15 @@ def create_vertical_toolbar(parent, frame):
     # Bind the plot limits tool
     frame.Bind(wx.EVT_TOOL, lambda event: show_plot_limits_window(frame), plot_limits_tool)
 
+    # Add green vertical line tool
+    frame.green_line_tool = v_toolbar.AddCheckTool(wx.ID_ANY, 'Green Line',
+                                                   wx.Bitmap(os.path.join(icon_path, "GreenLine-25.png"), wx.BITMAP_TYPE_PNG),
+                                                   wx.Bitmap(os.path.join(icon_path, "GreenLine-Selected-25.png"), wx.BITMAP_TYPE_PNG),
+                                                   shortHelp="Toggle draggable green vertical line")
+
+    # Bind green line tool
+    frame.Bind(wx.EVT_TOOL, lambda evt: toggle_green_vline(frame), frame.green_line_tool)
+
     v_toolbar.AddSeparator()
 
     # BE adjustment tools
@@ -2040,14 +2049,6 @@ def create_vertical_toolbar(parent, frame):
                                     shortHelp="Open Labels Manager")
     frame.Bind(wx.EVT_TOOL, frame.open_labels_window, labels_tool)
 
-    # Add green vertical line tool
-    frame.green_line_tool = v_toolbar.AddCheckTool(wx.ID_ANY, 'Green Line',
-                                                   wx.Bitmap(os.path.join(icon_path, "GreenLine-25.png"), wx.BITMAP_TYPE_PNG),
-                                                   wx.Bitmap(os.path.join(icon_path, "GreenLine-Selected-25.png"), wx.BITMAP_TYPE_PNG),
-                                                   shortHelp="Toggle draggable green vertical line")
-
-    # Bind green line tool
-    frame.Bind(wx.EVT_TOOL, lambda evt: toggle_green_vline(frame), frame.green_line_tool)
 
     # v_toolbar.AddSeparator()
 

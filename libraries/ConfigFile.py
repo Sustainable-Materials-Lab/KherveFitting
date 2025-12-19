@@ -147,6 +147,78 @@ def add_core_level_Data(Data, window, file_path, sheet_name):
             Data['Core levels'][sheet_name] = core_level
             return Data
 
+        # ========== Handle XPS~Map sheets ==========
+        if sheet_name.startswith('XPS~Map'):
+            be_values = []
+            y_columns = {}
+            num_sweeps = 0
+
+            header_row = df.iloc[0] if len(df) > 0 else None
+            if header_row is not None:
+                for col_idx, val in enumerate(header_row):
+                    if str(val).startswith('Y') and str(val)[1:].isdigit():
+                        num_sweeps = max(num_sweeps, int(str(val)[1:]))
+
+            for i in range(1, num_sweeps + 1):
+                y_columns[f'Y{i}'] = []
+
+            for index, row in df.iterrows():
+                if index == 0:
+                    continue
+                be_val = row.iloc[0]
+                if pd.isna(be_val):
+                    continue
+                try:
+                    be_values.append(float(be_val))
+                    for i in range(1, num_sweeps + 1):
+                        col_idx = i
+                        if col_idx < len(row) and not pd.isna(row.iloc[col_idx]):
+                            y_columns[f'Y{i}'].append(float(row.iloc[col_idx]))
+                        else:
+                            y_columns[f'Y{i}'].append(0.0)
+                except (ValueError, TypeError):
+                    continue
+
+            experimental_info = {}
+            wb = openpyxl.load_workbook(file_path)
+            if sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                exp_col = None
+                for col in range(num_sweeps + 5, min(num_sweeps + 30, ws.max_column + 1)):
+                    cell_value = ws.cell(row=1, column=col).value
+                    if cell_value and "Experimental Description" in str(cell_value):
+                        exp_col = col
+                        break
+                if exp_col:
+                    for row in range(2, ws.max_row + 1):
+                        param_cell = ws.cell(row=row, column=exp_col)
+                        value_cell = ws.cell(row=row, column=exp_col + 1)
+                        if param_cell.value is not None and str(param_cell.value).strip():
+                            experimental_info[str(param_cell.value).strip()] = str(value_cell.value).strip() if value_cell.value else ""
+            wb.close()
+
+            core_level = {
+                'Name': sheet_name,
+                'B.E.': [float(f"{val:.2f}") for val in be_values],
+                '_Map_type': 'scienta',
+                '_num_sweeps': num_sweeps,
+                '_core_level': experimental_info.get('Core Level', ''),
+            }
+            for col_name, values in y_columns.items():
+                core_level[col_name] = [float(f"{val:.2f}") for val in values]
+            if experimental_info:
+                core_level['ExperimentalInfo'] = experimental_info
+            if be_values:
+                core_level['Background'] = {
+                    'Bkg Type': '',
+                    'Bkg Low': float(f"{min(be_values):.2f}"),
+                    'Bkg High': float(f"{max(be_values):.2f}"),
+                    'Bkg Offset Low': 0,
+                    'Bkg Offset High': 0
+                }
+            Data['Core levels'][sheet_name] = core_level
+            return Data
+
         # Extract B.E. and Raw Data columns
         be_values = []
         raw_data = []

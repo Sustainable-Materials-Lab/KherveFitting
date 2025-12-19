@@ -4185,6 +4185,10 @@ def open_xlsx_file(window, file_path=None):
             if sheet_name == 'EELS~Map' or sheet_name == 'EELS~Plot' or sheet_name.startswith('EELS~Plot'):
                 continue
 
+            # Skip validation for XPS~Map sheets - they have Y1, Y2, Y3... columns
+            if sheet_name.startswith('XPS~Map'):
+                continue
+
             df = pd.read_excel(file_path, sheet_name=sheet_name, header=None)
             col1_value = str(df.iloc[0, 0]).strip().upper()
             col2_value = str(df.iloc[0, 1]).strip().upper()

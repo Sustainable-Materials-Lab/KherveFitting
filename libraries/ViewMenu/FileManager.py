@@ -715,7 +715,6 @@ class FileManagerWindow(wx.Frame):
                     unique_levels.add(base_name)
 
         return sorted(list(unique_levels))
-
     def extract_base_name_OLD(self, sheet_name):
         """Extract base core level name without any trailing numbers"""
         # Add support for Raman files with underscores
@@ -863,7 +862,7 @@ class FileManagerWindow(wx.Frame):
         # Set column sizes and row heights
         for i in range(len(self.core_levels)):
             col_label = self.grid.GetColLabelValue(i + 1)
-            if col_label.startswith(("EDX~", "XAS~", "EELS~", "RAM~", "zzMap~", "zzPro")):
+            if col_label.startswith(("EDX~", "XAS~", "EELS~", "RAM~", "zzMap~", "zzPro", "XPS~Map")):
                 self.grid.SetColSize(i + 1, default_col_width + 20)
             elif col_label.startswith(("zzMap~", "zzPro")):
                 self.grid.SetColSize(i + 1, default_col_width + 40)
@@ -1783,6 +1782,31 @@ class FileManagerWindow(wx.Frame):
                 self._plotting_edx = False
             return
 
+        # Check if this is an XPS~Map sheet
+        if sheet_name.startswith('XPS~Map'):
+            # Prevent re-entry
+            if hasattr(self, '_plotting_xps_map') and self._plotting_xps_map:
+                return
+            self._plotting_xps_map = True
+
+            try:
+                # Check if window already open for this map
+                if hasattr(self.parent, 'scienta_map_window') and self.parent.scienta_map_window:
+                    try:
+                        if not self.parent.scienta_map_window.IsBeingDeleted():
+                            self.parent.scienta_map_window.Raise()
+                            return
+                    except Exception as e:
+                        pass
+
+                # Open new map viewer
+                from libraries.ViewMenu.ScientaMapViewer import open_scienta_map_viewer
+                map_window = open_scienta_map_viewer(self.parent, sheet_name)
+                if map_window:
+                    self.parent.scienta_map_window = map_window
+            finally:
+                self._plotting_xps_map = False
+            return
         # Update parent's combobox
         self.parent.sheet_combobox.SetValue(sheet_name)
 
@@ -2324,10 +2348,18 @@ class FileManagerWindow(wx.Frame):
         col = event.GetCol()
         cell_value = self.grid.GetCellValue(row, col)
 
+        # Prevent multiple firing
+        if hasattr(self, '_processing_cell_click') and self._processing_cell_click:
+            event.Skip()
+            return
+
+        # Process the event to select the cell
         event.Skip()
 
+        # Check if shift or ctrl is being held down
         if not wx.GetKeyState(wx.WXK_SHIFT) and not wx.GetKeyState(wx.WXK_CONTROL):
             if cell_value and cell_value in self.parent.Data['Core levels']:
+                # Check if it's an EDX~Map sheet
                 if cell_value == 'EDX~Map':
                     # Open EDX/SEM window
                     from libraries.ToolsMenu.EDX_SEM_Analysis import open_edx_sem_window
@@ -2336,16 +2368,26 @@ class FileManagerWindow(wx.Frame):
                         hdf5_path = self.parent.current_file_path.replace('_EDX.xlsx', '.hdf5')
                         if not os.path.exists(hdf5_path):
                             hdf5_path = self.parent.current_file_path.replace('_EDX.xlsx', '.h5')
+
                         if os.path.exists(hdf5_path):
                             edx_window = open_edx_sem_window(self.parent)
                             if edx_window:
                                 edx_window.load_file(hdf5_path, 'EDX Map')
-                elif cell_value.startswith('zzMap~'):
-                    # Open Scienta Map Viewer for zzMap~ sheets
-                    from libraries.ViewMenu.ScientaMapViewer import open_scienta_map_viewer
-                    open_scienta_map_viewer(self.parent, cell_value)
+                elif cell_value.startswith('XPS~Map'):
+                    # Set flag to prevent re-entry
+                    self._processing_cell_click = True
+                    try:
+                        from libraries.ViewMenu.ScientaMapViewer import open_scienta_map_viewer
+                        open_scienta_map_viewer(self.parent, cell_value)
+                    finally:
+                        # Reset flag after a short delay to allow event processing to complete
+                        wx.CallLater(500, self._reset_cell_click_flag)
                 else:
                     wx.CallAfter(self.quick_plot_sheet, cell_value)
+
+    def _reset_cell_click_flag(self):
+        """Reset the cell click flag after delay"""
+        self._processing_cell_click = False
 
     def on_cursor_changed(self, event):
         # Process the event first to change the cursor
@@ -2355,13 +2397,14 @@ class FileManagerWindow(wx.Frame):
         if wx.GetKeyState(wx.WXK_SHIFT) or wx.GetKeyState(wx.WXK_CONTROL):
             return
 
-        row = event.GetRow()  # Use event row instead of cursor position
-        col = event.GetCol()  # Use event column instead of cursor position
+        row = event.GetRow()
+        col = event.GetCol()
         cell_value = self.grid.GetCellValue(row, col)
         if cell_value and cell_value in self.parent.Data['Core levels']:
-            # self.update_label_manager_if_open(cell_value)
+            # Skip map sheets
+            if cell_value == 'EDX~Map' or cell_value.startswith('XPS~Map'):
+                return
             wx.CallAfter(self.quick_plot_sheet, cell_value)
-
 
             # THIS MAY TO BE DELETED AS IT IS TOO SLOW
             # Get BE correction for the current row
@@ -5570,15 +5613,11 @@ class FileManagerWindow(wx.Frame):
             return
 
         # DEBUG: Print clipboard structure
-        print("DEBUG: Clipboard data keys:", clipboard_data.keys())
         if 'background' in clipboard_data:
-            print("DEBUG: Background data keys:", clipboard_data['background'].keys())
             if 'recorded_ranges' in clipboard_data['background']:
                 recorded_ranges = clipboard_data['background']['recorded_ranges']
-                print(f"DEBUG: Found {len(recorded_ranges)} recorded ranges in clipboard")
-                print(f"DEBUG: Recorded ranges: {recorded_ranges}")
             else:
-                print("DEBUG: No 'recorded_ranges' key in background data")
+                print("DENo 'recorded_ranges' key in background data")
         else:
             print("DEBUG: No 'background' key in clipboard data")
 
@@ -5831,30 +5870,26 @@ class FileManagerWindow(wx.Frame):
 
             # Update parent window properties to match pasted data
             self.parent.background_method = background_data.get('Bkg Type', 'Smart')
-            print(f"DEBUG: Set parent background_method to: {self.parent.background_method}")
+
 
             # Update offset values from first recorded range if available
             if 'Recorded_Ranges' in background_data and background_data['Recorded_Ranges']:
                 first_range = background_data['Recorded_Ranges'][0]
                 self.parent.offset_h = float(f"{float(first_range[0]):.2f}")  # offset_h
                 self.parent.offset_l = float(f"{float(first_range[1]):.2f}")  # offset_l
-                print(f"DEBUG: Set offsets - h: {self.parent.offset_h}, l: {self.parent.offset_l}")
 
             # Force peak fitting grid refresh if it exists
             if hasattr(self.parent, 'peak_params_grid'):
                 try:
                     wx.CallAfter(self.parent.peak_params_grid.ForceRefresh)
-                    print(f"DEBUG: Peak fitting grid refresh queued")
                 except Exception as e:
-                    print(f"WARNING: Could not refresh peak fitting grid: {e}")
+                    print(f"Error refreshing peak_params_grid: {e}")
 
             # Update peak fitting grid if it exists and has data (following On_Mouse_Defs.py pattern)
             if (hasattr(self.parent, 'peak_params_grid') and
                     self.parent.peak_params_grid.GetNumberRows() > 0):
-                print("DEBUG: Updating peak fitting grid background columns...")
 
                 num_peaks = self.parent.peak_params_grid.GetNumberRows() // 2
-                print(f"DEBUG: Number of peaks to update: {num_peaks}")
 
                 # Get the background values from the pasted data
                 bkg_type = background_data.get('Bkg Type', 'Smart')
@@ -5870,7 +5905,6 @@ class FileManagerWindow(wx.Frame):
                     bkg_high_val = 0.0
 
                 for i in range(num_peaks):
-                    print(f"DEBUG: Updating peak {i + 1} background info")
                     row = i * 2
                     # Update grid columns: 14=Bkg Type, 15=Bkg Low, 16=Bkg High
                     self.parent.peak_params_grid.SetCellValue(row, 14, bkg_type)
@@ -5879,9 +5913,6 @@ class FileManagerWindow(wx.Frame):
 
                 # Force grid refresh after updating cells
                 wx.CallAfter(self.parent.peak_params_grid.ForceRefresh)
-                print(f"DEBUG: Peak fitting grid updated with pasted background data")
-            else:
-                print("DEBUG: No peak fitting grid to update or grid is empty")
 
             # If we have recorded ranges, recreate the background from them using the target's data
             if 'Recorded_Ranges' in background_data and background_data['Recorded_Ranges']:
@@ -6134,8 +6165,6 @@ class FileManagerWindow(wx.Frame):
     def copy_peak_table_and_background_from_filemanager(self, row, col):
         """Copy both peak table and background from the selected core level in file manager"""
 
-        print("DEBUG: Starting copy of peak table and background")
-
         if col <= 0 or col > len(self.core_levels):
             return
 
@@ -6147,11 +6176,9 @@ class FileManagerWindow(wx.Frame):
         try:
             # Copy peak table first
             self.copy_peak_table_from_filemanager(row, col)
-            print("DEBUG: Peak table copied successfully")
 
             # Copy background second
             self.copy_background_from_filemanager(row, col)
-            print("DEBUG: Background copied successfully")
 
             self.parent.show_popup_message2("Peak Table + Background Copied",
                                             f"Peak table and background copied from '{sheet_name}'")
@@ -7473,23 +7500,18 @@ class FileManagerDropTarget(wx.FileDropTarget):
         """Copy SampleName from source file or use filename"""
         target_row_str = str(target_row)
 
-        # print(f"DEBUG: Processing sample row {original_sample_row} -> target row {target_row}")
-        # print(f"DEBUG: Target row string: '{target_row_str}'")
 
         # Check if source file has SampleNames data
         if 'SampleNames' in json_data_to_add and str(original_sample_row) in json_data_to_add['SampleNames']:
             # Copy the existing SampleName from the source file
             source_sample_name = json_data_to_add['SampleNames'][str(original_sample_row)]
             self.main_window.Data['SampleNames'][target_row_str] = source_sample_name
-            # print(f"DEBUG: Copied SampleName: '{source_sample_name}' for row {target_row}")
+
         else:
             # Use filename as SampleName (without extension)
             filename = os.path.splitext(os.path.basename(file_path))[0]
             self.main_window.Data['SampleNames'][target_row_str] = filename
-            # print(f"DEBUG: Using filename as SampleName: '{filename}' for row {target_row}")
 
-        # Verify it was added
-        # print(f"DEBUG: Current SampleNames: {self.main_window.Data['SampleNames']}")
 
     def _add_file_to_current(self, file_path):
         """Add the dropped file's data to the current file, keeping sample rows together"""
@@ -7531,7 +7553,6 @@ class FileManagerDropTarget(wx.FileDropTarget):
             sample_names_to_add = {}  # Store new sample names to add later
 
             for sample_row, sheet_names in sheets_by_sample.items():
-                # print(f"DEBUG: Processing sample_row {sample_row} with sheets: {sheet_names}")
 
                 # Ask user at which row to insert this sample
                 target_row = self._ask_user_for_row(sample_row, sheet_names)
@@ -7542,18 +7563,16 @@ class FileManagerDropTarget(wx.FileDropTarget):
                     current_wb.close()
                     return
 
-                # print(f"DEBUG: User selected target_row: {target_row}")
+
 
                 # Determine what SampleName to use for this target row
                 if 'SampleNames' in json_data_to_add and str(sample_row) in json_data_to_add['SampleNames']:
                     sample_name = json_data_to_add['SampleNames'][str(sample_row)]
-                    # print(f"DEBUG: Using SampleName from source file: '{sample_name}'")
+
                 else:
                     sample_name = os.path.splitext(os.path.basename(file_path))[0]
-                    # print(f"DEBUG: Using filename as SampleName: '{sample_name}'")
 
                 sample_names_to_add[str(target_row)] = sample_name
-                # print(f"DEBUG: Will add SampleName '{sample_name}' for row {target_row}")
 
                 # Process each sheet in this sample row
                 for sheet_name in sheet_names:
@@ -7573,14 +7592,11 @@ class FileManagerDropTarget(wx.FileDropTarget):
             current_wb.close()
             wb_to_add.close()
 
-            # print(f"DEBUG: About to update SampleNames and interface manually")
-
             # Update SampleNames in window.Data
             if 'SampleNames' not in self.main_window.Data:
                 self.main_window.Data['SampleNames'] = {}
 
             self.main_window.Data['SampleNames'].update(sample_names_to_add)
-            # print(f"DEBUG: SampleNames updated: {self.main_window.Data['SampleNames']}")
 
             # Update interface manually (DON'T use open_xlsx_file)
             # Update sheet combobox
@@ -7603,7 +7619,6 @@ class FileManagerDropTarget(wx.FileDropTarget):
             json_data = convert_to_serializable_and_round(self.main_window.Data)
             with open(current_json_path, 'w') as json_file:
                 json.dump(json_data, json_file, indent=2)
-            # print(f"DEBUG: Final JSON saved with SampleNames: {json_data.get('SampleNames')}")
 
             # Refresh all sheets to update everything properly
             from libraries.FileMenu.Save import refresh_sheets
@@ -7739,7 +7754,6 @@ class FileManagerDropTarget(wx.FileDropTarget):
     def _find_next_available_row(self, sheet_names_to_add):
         """Find the next completely empty row that can fit all the core levels"""
         existing_sheets = list(self.main_window.Data.get('Core levels', {}).keys())
-        print(f"DEBUG: Existing sheets: {existing_sheets}")
 
         # Extract base names from sheets to add (C1s2 -> C1s)
         base_names_to_add = []
@@ -7749,31 +7763,25 @@ class FileManagerDropTarget(wx.FileDropTarget):
             base_name = re.sub(r'\d+$', '', sheet_name)
             base_names_to_add.append(base_name)
 
-        print(f"DEBUG: Base names to add: {base_names_to_add}")
-
         # Check each row starting from 0
         row = 0
         while True:
             row_is_available = True
-            print(f"DEBUG: Checking row {row}")
 
             # Check if this row can accommodate all our core levels
             for base_name in base_names_to_add:
                 if row == 0:
                     # For row 0, check both "C1s" and "C1s0" formats
                     if base_name in existing_sheets or f"{base_name}0" in existing_sheets:
-                        print(f"DEBUG: Row {row} occupied by {base_name}")
                         row_is_available = False
                         break
                 else:
                     # For other rows, check "C1s1", "C1s2", etc.
                     if f"{base_name}{row}" in existing_sheets:
-                        print(f"DEBUG: Row {row} occupied by {base_name}{row}")
                         row_is_available = False
                         break
 
             if row_is_available:
-                print(f"DEBUG: Row {row} is available!")
                 return row
 
             row += 1
