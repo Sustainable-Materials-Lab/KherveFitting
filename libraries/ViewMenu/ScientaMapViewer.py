@@ -37,7 +37,21 @@ class ScientaMapViewerWindow(wx.Frame):
             parent: Parent window (main KherveFitting window)
             map_sheet_name: Name of the map sheet (e.g., 'XPS~Map')
         """
-        super().__init__(parent, title=f"XPS HeatMap",
+        # Get base name early for title
+        map_data_temp = parent.Data['Core levels'].get(map_sheet_name, {})
+        base_name_temp = map_data_temp.get('_core_level', '') or map_data_temp.get('ExperimentalInfo', {}).get('Core Level', '')
+        if not base_name_temp:
+            region_name = map_data_temp.get('ExperimentalInfo', {}).get('Region Name', '')
+            if region_name:
+                base_name_temp = region_name.strip().replace(' ', '')
+                for suffix in ['_fast2', '_fast', '_slow', '_quick', '_scan']:
+                    if base_name_temp.endswith(suffix):
+                        base_name_temp = base_name_temp[:-len(suffix)]
+                        break
+            else:
+                base_name_temp = 'Spectrum'
+
+        super().__init__(parent, title=f"XPS HeatMap - {base_name_temp}",
                         size=(650, 600), style=wx.DEFAULT_FRAME_STYLE | wx.STAY_ON_TOP)
 
         self.parent = parent
@@ -138,13 +152,13 @@ class ScientaMapViewerWindow(wx.Frame):
 
         # Toolbar at top
         toolbar_panel = self.create_toolbar(panel)
-        main_sizer.Add(toolbar_panel, 0, wx.EXPAND | wx.ALL, 2)
+        main_sizer.Add(toolbar_panel, 0, wx.EXPAND | wx.ALL, 0)
 
         # Main content - horizontal split
         content_sizer = wx.BoxSizer(wx.HORIZONTAL)
 
         # Left panel - info and controls
-        left_panel = wx.Panel(panel)
+        left_panel = wx.Panel(panel, style=wx.BORDER_SIMPLE)
         left_sizer = wx.BoxSizer(wx.VERTICAL)
 
         # Sweep info
@@ -166,12 +180,15 @@ class ScientaMapViewerWindow(wx.Frame):
         # Binning control
         left_sizer.Add(wx.StaticLine(left_panel), 0, wx.EXPAND | wx.ALL, 5)
 
-        bin_label = wx.StaticText(left_panel, label="Bin Factor:")
+        bin_label = wx.StaticText(left_panel, label="Bin (group sweeps):")
         left_sizer.Add(bin_label, 0, wx.LEFT | wx.TOP, 5)
 
-        self.bin_spin = wx.SpinCtrl(left_panel, min=1, max=10, initial=1, size=(60, -1))
+        self.bin_spin = wx.SpinCtrl(left_panel, min=1, max=self.num_sweeps, initial=1, size=(60, -1))
         self.bin_spin.Bind(wx.EVT_SPINCTRL, self.on_bin_change)
         left_sizer.Add(self.bin_spin, 0, wx.ALL, 5)
+
+        self.bin_info_label = wx.StaticText(left_panel, label=f"-> {self.num_sweeps} spectra")
+        left_sizer.Add(self.bin_info_label, 0, wx.LEFT | wx.BOTTOM, 5)
 
         # Selection info
         left_sizer.Add(wx.StaticLine(left_panel), 0, wx.EXPAND | wx.ALL, 5)
@@ -182,30 +199,33 @@ class ScientaMapViewerWindow(wx.Frame):
         # Action buttons
         left_sizer.Add(wx.StaticLine(left_panel), 0, wx.EXPAND | wx.ALL, 5)
 
-        self.sum_selected_btn = wx.Button(left_panel, label="Sum Selection")
+        self.sum_all_btn = wx.Button(left_panel, label="Export\nSummed Spectrum")
+        self.sum_all_btn.SetMinSize((-1, 35))
+        self.sum_all_btn.SetToolTip("Sum all active sweeps")
+        self.sum_all_btn.Bind(wx.EVT_BUTTON, self.on_sum_all)
+        left_sizer.Add(self.sum_all_btn, 0, wx.EXPAND | wx.ALL, 3)
+
+        self.sum_selected_btn = wx.Button(left_panel, label="Export\nSummed Selected")
+        self.sum_selected_btn.SetMinSize((-1, 35))
         self.sum_selected_btn.SetToolTip("Sum sweeps in selected rectangle")
         self.sum_selected_btn.Bind(wx.EVT_BUTTON, self.on_sum_selection)
         self.sum_selected_btn.Enable(False)
         left_sizer.Add(self.sum_selected_btn, 0, wx.EXPAND | wx.ALL, 3)
 
-        self.sum_all_btn = wx.Button(left_panel, label="Sum All Active")
-        self.sum_all_btn.SetToolTip("Sum all active sweeps")
-        self.sum_all_btn.Bind(wx.EVT_BUTTON, self.on_sum_all)
-        left_sizer.Add(self.sum_all_btn, 0, wx.EXPAND | wx.ALL, 3)
+        self.export_binned_btn = wx.Button(left_panel, label="Export\nBinned Spectra")
+        self.export_binned_btn.SetMinSize((-1, 35))
+        self.export_binned_btn.SetToolTip("Export binned (grouped) spectra")
+        self.export_binned_btn.Bind(wx.EVT_BUTTON, self.on_export_binned)
+        left_sizer.Add(self.export_binned_btn, 0, wx.EXPAND | wx.ALL, 3)
 
-        left_sizer.Add(wx.StaticLine(left_panel), 0, wx.EXPAND | wx.ALL, 5)
-
-        self.export_all_btn = wx.Button(left_panel, label="Export All Spectra")
+        self.export_all_btn = wx.Button(left_panel, label="Export\nAll Individuals")
+        self.export_all_btn.SetMinSize((-1, 35))
         self.export_all_btn.SetToolTip("Export each sweep as separate spectrum")
         self.export_all_btn.Bind(wx.EVT_BUTTON, self.on_export_all_spectra)
         left_sizer.Add(self.export_all_btn, 0, wx.EXPAND | wx.ALL, 3)
 
-        self.export_summed_btn = wx.Button(left_panel, label="Export Summed")
-        self.export_summed_btn.SetToolTip("Export all summed spectra")
-        self.export_summed_btn.Bind(wx.EVT_BUTTON, self.on_export_summed)
-        left_sizer.Add(self.export_summed_btn, 0, wx.EXPAND | wx.ALL, 3)
-
-        self.export_selected_btn = wx.Button(left_panel, label="Export Selected")
+        self.export_selected_btn = wx.Button(left_panel, label="Export\nIndividuals Selected")
+        self.export_selected_btn.SetMinSize((-1, 35))
         self.export_selected_btn.SetToolTip("Export selected spectra")
         self.export_selected_btn.Bind(wx.EVT_BUTTON, self.on_export_selected)
         self.export_selected_btn.Enable(False)
@@ -213,7 +233,7 @@ class ScientaMapViewerWindow(wx.Frame):
 
         left_panel.SetSizer(left_sizer)
         left_panel.SetMinSize((130, -1))
-        content_sizer.Add(left_panel, 0, wx.EXPAND | wx.ALL, 2)
+        content_sizer.Add(left_panel, 0, wx.EXPAND | wx.ALL, 0)
 
         # Right panel - heatmap
         right_panel = wx.Panel(panel)
@@ -225,12 +245,12 @@ class ScientaMapViewerWindow(wx.Frame):
         self.canvas = FigureCanvas(right_panel, -1, self.figure)
         self.ax = self.figure.add_subplot(111)
 
-        right_sizer.Add(self.canvas, 1, wx.EXPAND | wx.ALL, 2)
+        right_sizer.Add(self.canvas, 1, wx.EXPAND | wx.ALL, 0)
 
         right_panel.SetSizer(right_sizer)
-        content_sizer.Add(right_panel, 1, wx.EXPAND | wx.ALL, 2)
+        content_sizer.Add(right_panel, 1, wx.EXPAND | wx.ALL, 0)
 
-        main_sizer.Add(content_sizer, 1, wx.EXPAND)
+        main_sizer.Add(content_sizer, 1, wx.EXPAND, 0)
 
         panel.SetSizer(main_sizer)
 
@@ -240,7 +260,7 @@ class ScientaMapViewerWindow(wx.Frame):
 
     def create_toolbar(self, parent):
         """Create toolbar with icon buttons like EDX~Map window."""
-        toolbar_panel = wx.Panel(parent)
+        toolbar_panel = wx.Panel(parent, style=wx.BORDER_SIMPLE)
         toolbar_sizer = wx.BoxSizer(wx.HORIZONTAL)
 
         btn_size = (25, 25)
@@ -379,10 +399,13 @@ class ScientaMapViewerWindow(wx.Frame):
         return bmp
 
     def on_bin_change(self, event):
-        """Handle binning change."""
+        """Handle binning change - groups sweeps together."""
         self.bin_factor = self.bin_spin.GetValue()
-        self.apply_binning()
-        self.update_heatmap()
+
+        # Calculate number of output spectra when binning sweeps
+        active_sweeps = self.num_sweeps - len(self.dropped_sweeps)
+        num_binned = active_sweeps // self.bin_factor if self.bin_factor > 0 else active_sweeps
+        self.bin_info_label.SetLabel(f"-> {num_binned} spectra")
 
     def apply_binning(self):
         """Apply binning to the data."""
@@ -437,15 +460,18 @@ class ScientaMapViewerWindow(wx.Frame):
         if be_descending:
             # BE already goes high to low, plot normally
             self.heatmap = self.ax.imshow(data, aspect='auto', origin='lower',
-                          extent=[self.be_values_display[0], self.be_values_display[-1],
-                                  0.5, self.num_sweeps_display + 0.5],
-                          cmap=self.colormap)
+                                          extent=[self.be_values_display[0], self.be_values_display[-1],
+                                                  0, self.num_sweeps_display - 0],
+                                          cmap=self.colormap)
         else:
             # BE goes low to high, flip for display
             data_flipped = np.fliplr(data)
             self.heatmap = self.ax.imshow(data_flipped, aspect='auto', origin='lower',
-                          extent=[be_max, be_min, 0.5, self.num_sweeps_display + 0.5],
-                          cmap=self.colormap)
+                                          extent=[be_max, be_min, 0, self.num_sweeps_display - 0],
+                                          cmap=self.colormap)
+
+            # Set Y-axis limits to start at 0
+        self.ax.set_ylim(0, self.num_sweeps_display)
 
         self.ax.set_xlabel('Binding Energy (eV)', fontsize=10)
         self.ax.set_ylabel('Sweep Number', fontsize=10)
@@ -458,9 +484,9 @@ class ScientaMapViewerWindow(wx.Frame):
                                      linestyle='-')
             self.ax.add_patch(rect)
 
-        # Initialize drop line (hidden initially)
-        self.drop_line = self.ax.axhline(y=-1, color='red', linewidth=1.5, linestyle='--', visible=False)
-        self.drop_text = self.ax.text(be_max, -1, '', color='red', fontsize=8, ha='left', visible=False)
+        # Initialize drop line (hidden initially, position outside view)
+        self.drop_line = self.ax.axhline(y=-10, color='red', linewidth=1.5, linestyle='--', visible=False)
+        self.drop_text = self.ax.text(be_max, -10, '', color='red', fontsize=8, ha='left', visible=False)
 
         self.canvas.draw()
         self.update_labels()
@@ -518,7 +544,7 @@ class ScientaMapViewerWindow(wx.Frame):
         """Reset zoom to full view."""
         be_min, be_max = self.be_values_display.min(), self.be_values_display.max()
         self.ax.set_xlim(be_max, be_min)
-        self.ax.set_ylim(0.5, self.num_sweeps_display + 0.5)
+        self.ax.set_ylim(0, self.num_sweeps_display)
         self.canvas.draw()
 
     def on_pan(self, event):
@@ -628,8 +654,32 @@ class ScientaMapViewerWindow(wx.Frame):
         self.update_heatmap()
 
     def on_clear_selection(self, event):
-        """Clear the current selection."""
+        """Clear the current selection and reset all modes."""
         self.selected_rect = None
+
+        # Deselect all toggle buttons
+        self.zoom_in_btn.SetValue(False)
+        self.pan_btn.SetValue(False)
+        self.rect_btn.SetValue(False)
+        self.line_btn.SetValue(False)
+
+        # Clear selection mode
+        self.selection_mode = None
+
+        # Clear selectors
+        self._clear_selectors()
+
+        # Hide drop line
+        self._hide_drop_line()
+
+        # Disable selection-dependent buttons
+        self.sum_selected_btn.Enable(False)
+        self.export_selected_btn.Enable(False)
+
+        # Update selection label
+        self.selection_label.SetLabel("Selection: None")
+
+        # Update display
         self.update_heatmap()
 
     def on_undo(self, event):
@@ -830,14 +880,46 @@ class ScientaMapViewerWindow(wx.Frame):
         for sweep_idx in valid_sweeps:
             intensities = self.data_2d_original[sweep_idx, :]
             self._save_as_xps_plot(self.be_values, intensities, 1,
-                                  f"Sweep {sweep_idx + 1}",
-                                  suffix=f"_sw{sweep_idx + 1}")
+                                  f"Sweep {sweep_idx + 1}")
 
         wx.MessageBox(f"Exported {len(valid_sweeps)} spectra.", "Success", wx.OK | wx.ICON_INFORMATION)
 
     def on_export_summed(self, event):
         """Export summed spectrum."""
         self.on_sum_all(event)
+
+    def on_export_binned(self, event):
+        """Export binned (grouped) spectra - groups sweeps by bin_factor."""
+        valid_sweeps = [i for i in range(self.num_sweeps) if i not in self.dropped_sweeps]
+
+        if not valid_sweeps:
+            wx.MessageBox("No active sweeps.", "Error", wx.OK | wx.ICON_ERROR)
+            return
+
+        if self.bin_factor <= 1:
+            # No binning, just export all
+            self.on_export_all_spectra(event)
+            return
+
+        # Group sweeps by bin factor
+        num_bins = len(valid_sweeps) // self.bin_factor
+        if num_bins == 0:
+            wx.MessageBox(f"Bin factor {self.bin_factor} is too large for {len(valid_sweeps)} sweeps.",
+                         "Error", wx.OK | wx.ICON_ERROR)
+            return
+
+        for bin_idx in range(num_bins):
+            start_idx = bin_idx * self.bin_factor
+            end_idx = start_idx + self.bin_factor
+            sweeps_in_bin = valid_sweeps[start_idx:end_idx]
+
+            # Sum sweeps in this bin
+            binned_data = np.sum(self.data_2d_original[sweeps_in_bin, :], axis=0)
+
+            self._save_as_xps_plot(self.be_values, binned_data, len(sweeps_in_bin),
+                                  f"Binned ({len(sweeps_in_bin)} sweeps)")
+
+        wx.MessageBox(f"Exported {num_bins} binned spectra.", "Success", wx.OK | wx.ICON_INFORMATION)
 
     def on_export_selected(self, event):
         """Export selected spectra."""
@@ -861,24 +943,23 @@ class ScientaMapViewerWindow(wx.Frame):
         for sweep_idx in valid_sweeps:
             intensities = self.data_2d_original[sweep_idx, be_indices]
             self._save_as_xps_plot(self.be_values[be_indices], intensities, 1,
-                                  f"Sweep {sweep_idx + 1} (selected)",
-                                  suffix=f"_sw{sweep_idx + 1}_sel")
+                                  f"Sweep {sweep_idx + 1} (selected)")
 
         wx.MessageBox(f"Exported {len(valid_sweeps)} selected spectra.", "Success", wx.OK | wx.ICON_INFORMATION)
 
-    def _save_as_xps_plot(self, be_values, intensities, num_sweeps, description, suffix=""):
+    def _save_as_xps_plot(self, be_values, intensities, num_sweeps, description):
         """Save spectrum to parent window as XPS plot sheet."""
         if self.parent is None:
             return
 
-        sheet_name = self.base_name + suffix
+        # Generate unique sheet name: base_name, base_name1, base_name2, etc.
+        sheet_name = self.base_name
         existing = list(self.parent.Data['Core levels'].keys())
         if sheet_name in existing:
             counter = 1
-            base = sheet_name
-            while f"{base}{counter}" in existing:
+            while f"{self.base_name}{counter}" in existing:
                 counter += 1
-            sheet_name = f"{base}{counter}"
+            sheet_name = f"{self.base_name}{counter}"
 
         core_level_data = {
             'Name': sheet_name,
@@ -919,6 +1000,18 @@ class ScientaMapViewerWindow(wx.Frame):
         from libraries.FileMenu.Save import save_state
         save_state(self.parent)
 
+        # Reopen FileManager at its previous position if it was open
+        if hasattr(self.parent, '_file_manager_position'):
+            try:
+                from libraries.FileManager import FileManagerWindow
+                self.parent.file_manager = FileManagerWindow(self.parent)
+                self.parent.file_manager.SetPosition(self.parent._file_manager_position)
+                if hasattr(self.parent, '_file_manager_size'):
+                    self.parent.file_manager.SetSize(self.parent._file_manager_size)
+                self.parent.file_manager.Show()
+            except Exception as e:
+                print(f"Error reopening FileManager: {e}")
+
     def _add_sheet_to_excel(self, sheet_name, be_values, intensities):
         """Add new sheet to Excel file."""
         excel_path = self.parent.Data.get('FilePath', '')
@@ -943,6 +1036,15 @@ class ScientaMapViewerWindow(wx.Frame):
 
     def on_close(self, event):
         """Handle window close."""
+        # Close FileManager if open and store its position
+        if hasattr(self.parent, 'file_manager') and self.parent.file_manager:
+            try:
+                self.parent._file_manager_position = self.parent.file_manager.GetPosition()
+                self.parent._file_manager_size = self.parent.file_manager.GetSize()
+                self.parent.file_manager.Close()
+            except:
+                pass
+
         if hasattr(self.parent, 'scienta_map_window'):
             self.parent.scienta_map_window = None
         self.Destroy()

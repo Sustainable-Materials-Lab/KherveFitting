@@ -804,7 +804,7 @@ def create_menu(window):
     window.Bind(wx.EVT_MENU, lambda evt: import_scienta_map(window), scienta_item)
     scienta_file_item = scienta_menu.Append(wx.ID_ANY, "Plot file (.txt)")
     window.Bind(wx.EVT_MENU, lambda evt: import_scienta_file(window), scienta_file_item)
-    import_menu.AppendSubMenu(scienta_menu, "Scienta")
+    import_menu.AppendSubMenu(scienta_menu, "Scienta Omicron")
 
     # MRS submenu
     mrs_menu = wx.Menu()

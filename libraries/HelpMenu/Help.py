@@ -423,6 +423,17 @@ Philosophy:
 -v1.7 Nov-25  - Automatic Survey identification / batch fitting / Profile manager
 -v1.8 Jan-26  - Fitting of Entities or Shapes / PCA tool
 -v1.9 xxx-26  - Towards Linux Version (Synchrotron)
+Version 1.700-1.790
+- Improve import of Phi Data
+- Improve import of Scienta Omicron Data
+- Improve Avanatage import data
+- Possibility to import Thermo VGD files
+- Improve Generic excel import
+- Added XAS technique
+- Added EDX technique
+- Added EELS technique
+- Added possibility of importing  maps
+- 
 
 Version 1.600-1.690
 - Added Principal Component Analysis (PCA) tool

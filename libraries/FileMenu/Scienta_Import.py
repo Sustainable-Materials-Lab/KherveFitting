@@ -275,7 +275,7 @@ class ScientaMapPreviewWindow(wx.Frame):
         width = min(2000, 360 * cols + 50)
         height = min(1000, 320 * 2 + 120)
 
-        super().__init__(parent, title=f"Scienta Map Preview - {os.path.basename(parsed_data['file_path'])}",
+        super().__init__(parent, title=f"Scienta Omicron Map Preview - {os.path.basename(parsed_data['file_path'])}",
                         size=(width, height), style=wx.DEFAULT_FRAME_STYLE)
 
         self.parent = parent
@@ -438,22 +438,35 @@ class ScientaMapPreviewWindow(wx.Frame):
             num_sweeps = region['sweeps']
             be_min, be_max = be_values.min(), be_values.max()
 
+            # Check if BE is in descending order (typical for XPS)
+            be_descending = be_values[0] > be_values[-1] if len(be_values) > 1 else False
+
             # Plot heatmap with Greens colormap
-            im = ax.imshow(data, aspect='auto', origin='lower',
-                          extent=[be_min, be_max, 0.5, num_sweeps + 0.5],
-                          cmap='Greens')
+            if be_descending:
+                # BE already goes high to low, plot normally
+                im = ax.imshow(data, aspect='auto', origin='lower',
+                               extent=[be_values[0], be_values[-1], -0.5, num_sweeps - 0.5],
+                               cmap='Greens')
+            else:
+                # BE goes low to high, flip data for display
+                data_flipped = np.fliplr(data)
+                im = ax.imshow(data_flipped, aspect='auto', origin='lower',
+                               extent=[be_max, be_min, -0.5, num_sweeps - 0.5],
+                               cmap='Greens')
             self.heatmaps.append(im)
 
+            # Set Y-axis limits to start at 0
+            ax.set_ylim(0, num_sweeps)
+
             # Add horizontal line at current sweep
-            line = ax.axhline(y=self.current_sweep_index + 1, color='red',
-                            linewidth=1.5, linestyle='--')
+            line = ax.axhline(y=self.current_sweep_index + 0.5, color='red',
+                              linewidth=1.5, linestyle='--')
             self.sweep_lines.append(line)
 
             ax.set_title(region['name'], fontsize=8)
             ax.set_xlabel('BE (eV)', fontsize=7)
             ax.set_ylabel('Sweep', fontsize=7)
             ax.tick_params(labelsize=6)
-            ax.invert_xaxis()
 
         self.figure.tight_layout(pad=0.5)
         self.canvas.draw()
@@ -462,7 +475,7 @@ class ScientaMapPreviewWindow(wx.Frame):
         """Update just the sweep indicator lines."""
         for line in self.sweep_lines:
             if line is not None:
-                line.set_ydata([self.current_sweep_index + 1, self.current_sweep_index + 1])
+                line.set_ydata([self.current_sweep_index + 0.5, self.current_sweep_index + 0.5])
         self.canvas.draw_idle()
 
     def update_status(self):
