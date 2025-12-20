@@ -952,6 +952,24 @@ class ScientaMapViewerWindow(wx.Frame):
         if self.parent is None:
             return
 
+        # Check if FileManager is open and store its position
+        file_manager_was_open = False
+        file_manager_position = None
+        file_manager_size = None
+        if hasattr(self.parent, 'file_manager') and self.parent.file_manager:
+            try:
+                file_manager_was_open = True
+                file_manager_position = self.parent.file_manager.GetPosition()
+                file_manager_size = self.parent.file_manager.GetSize()
+                self.parent.file_manager.Close()
+                self.parent.file_manager = None
+            except:
+                pass
+
+        # Divide by number of sweeps to get averaged intensity
+        if num_sweeps > 1:
+            intensities = intensities / num_sweeps
+
         # Generate unique sheet name: base_name, base_name1, base_name2, etc.
         sheet_name = self.base_name
         existing = list(self.parent.Data['Core levels'].keys())
@@ -960,6 +978,36 @@ class ScientaMapViewerWindow(wx.Frame):
             while f"{self.base_name}{counter}" in existing:
                 counter += 1
             sheet_name = f"{self.base_name}{counter}"
+
+        # Get experimental info from the map data
+        map_data = self.parent.Data['Core levels'].get(self.map_sheet_name, {})
+        source_exp_info = map_data.get('ExperimentalInfo', {})
+
+        # Build comprehensive ExperimentalInfo
+        exp_info = {
+            'Sample ID': source_exp_info.get('Sample ID', ''),
+            'Spectrum Name': source_exp_info.get('Spectrum Name', ''),
+            'Region Name': source_exp_info.get('Region Name', ''),
+            'Core Level': self.base_name,
+            'Source Map': self.map_sheet_name,
+            'Instrument': source_exp_info.get('Instrument', ''),
+            'Location': source_exp_info.get('Location', ''),
+            'User': source_exp_info.get('User', ''),
+            'Date': source_exp_info.get('Date', ''),
+            'Time': source_exp_info.get('Time', ''),
+            'Technique': 'XPS',
+            'Excitation Energy': source_exp_info.get('Excitation Energy', ''),
+            'Pass Energy': source_exp_info.get('Pass Energy', ''),
+            'Energy Scale': source_exp_info.get('Energy Scale', ''),
+            'Lens Mode': source_exp_info.get('Lens Mode', ''),
+            'Step Time': source_exp_info.get('Step Time', ''),
+            'Number of Points': str(len(be_values)),
+            'BE Start': f"{be_values[0]:.2f}",
+            'BE End': f"{be_values[-1]:.2f}",
+            'Total Sweeps in Map': source_exp_info.get('Number of Sweeps', str(self.num_sweeps)),
+            'Sweeps Summed': str(num_sweeps),
+            'Description': description,
+        }
 
         core_level_data = {
             'Name': sheet_name,
@@ -974,18 +1022,13 @@ class ScientaMapViewerWindow(wx.Frame):
                 'Bkg Offset High': 0,
                 'Bkg Y': [round(float(val), 2) for val in intensities]
             },
-            'ExperimentalInfo': {
-                'Source Map': self.map_sheet_name,
-                'Sweeps Summed': str(num_sweeps),
-                'Description': description,
-                'Core Level': self.base_name
-            }
+            'ExperimentalInfo': exp_info
         }
 
         self.parent.Data['Core levels'][sheet_name] = core_level_data
         self.parent.Data['Number of Core levels'] = len(self.parent.Data['Core levels'])
 
-        self._add_sheet_to_excel(sheet_name, be_values, intensities)
+        self._add_sheet_to_excel(sheet_name, be_values, intensities, exp_info)
 
         if sheet_name not in [self.parent.sheet_combobox.GetString(i)
                               for i in range(self.parent.sheet_combobox.GetCount())]:
@@ -1000,20 +1043,25 @@ class ScientaMapViewerWindow(wx.Frame):
         from libraries.FileMenu.Save import save_state
         save_state(self.parent)
 
-        # Reopen FileManager at its previous position if it was open
-        if hasattr(self.parent, '_file_manager_position'):
+        # Refresh all to update intensity display
+        if hasattr(self.parent, 'refresh_all'):
+            self.parent.refresh_all()
+
+        # Restore FileManager if it was open
+        if file_manager_was_open:
             try:
-                from libraries.FileManager import FileManagerWindow
+                from libraries.ViewMenu.FileManager import FileManagerWindow
                 self.parent.file_manager = FileManagerWindow(self.parent)
-                self.parent.file_manager.SetPosition(self.parent._file_manager_position)
-                if hasattr(self.parent, '_file_manager_size'):
-                    self.parent.file_manager.SetSize(self.parent._file_manager_size)
+                if file_manager_position:
+                    self.parent.file_manager.SetPosition(file_manager_position)
+                if file_manager_size:
+                    self.parent.file_manager.SetSize(file_manager_size)
                 self.parent.file_manager.Show()
             except Exception as e:
                 print(f"Error reopening FileManager: {e}")
 
-    def _add_sheet_to_excel(self, sheet_name, be_values, intensities):
-        """Add new sheet to Excel file."""
+    def _add_sheet_to_excel(self, sheet_name, be_values, intensities, exp_info=None):
+        """Add new sheet to Excel file with experimental info."""
         excel_path = self.parent.Data.get('FilePath', '')
         if not excel_path or not os.path.exists(excel_path):
             return
@@ -1029,22 +1077,40 @@ class ScientaMapViewerWindow(wx.Frame):
                 ws.cell(row=i, column=1, value=round(float(be), 2))
                 ws.cell(row=i, column=2, value=round(float(intensity), 2))
 
+            # Add experimental info
+            if exp_info:
+                exp_col = 50
+                ws.cell(row=1, column=exp_col, value="Experimental Description")
+
+                row = 2
+                for key, value in exp_info.items():
+                    ws.cell(row=row, column=exp_col, value=key)
+                    ws.cell(row=row, column=exp_col + 1, value=str(value))
+                    row += 1
+
+                ws.column_dimensions[openpyxl.utils.get_column_letter(exp_col)].width = 25
+                ws.column_dimensions[openpyxl.utils.get_column_letter(exp_col + 1)].width = 40
+
             wb.save(excel_path)
             wb.close()
         except Exception as e:
             print(f"Error adding sheet to Excel: {e}")
 
+    def on_show_info(self, event=None):
+        """Show experimental info window using parent's method."""
+        if hasattr(self.parent, 'show_info_window'):
+            # Get map data's experimental info
+            map_data = self.parent.Data['Core levels'].get(self.map_sheet_name, {})
+            exp_info = map_data.get('ExperimentalInfo', {})
+
+            if exp_info:
+                self.parent.show_info_window(exp_info, f"Map Info - {self.map_sheet_name}")
+            else:
+                wx.MessageBox("No experimental information available for this map.",
+                              "Info", wx.OK | wx.ICON_INFORMATION)
+
     def on_close(self, event):
         """Handle window close."""
-        # Close FileManager if open and store its position
-        if hasattr(self.parent, 'file_manager') and self.parent.file_manager:
-            try:
-                self.parent._file_manager_position = self.parent.file_manager.GetPosition()
-                self.parent._file_manager_size = self.parent.file_manager.GetSize()
-                self.parent.file_manager.Close()
-            except:
-                pass
-
         if hasattr(self.parent, 'scienta_map_window'):
             self.parent.scienta_map_window = None
         self.Destroy()

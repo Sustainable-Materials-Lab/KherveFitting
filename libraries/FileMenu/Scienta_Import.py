@@ -576,7 +576,7 @@ class ScientaMapPreviewWindow(wx.Frame):
                 bin_indices_list.append(bin_indices)
 
                 bin_data = region['data_2d'][bin_indices, :]
-                summed = np.sum(bin_data, axis=0)
+                summed = np.sum(bin_data, axis=0) / len(bin_indices)
                 binned_intensities.append(summed)
 
                 start = end
@@ -631,7 +631,7 @@ class ScientaMapPreviewWindow(wx.Frame):
                 return
 
             valid_data = region['data_2d'][valid_indices, :]
-            summed_intensities = np.sum(valid_data, axis=0)
+            summed_intensities = np.sum(valid_data, axis=0) / len(valid_indices)
 
             summed_region = {
                 'name': region['name'],
