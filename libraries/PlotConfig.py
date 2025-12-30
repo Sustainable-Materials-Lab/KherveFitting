@@ -554,29 +554,140 @@ class PlotConfig:
                     elif direction == 'decrease':
                         limits['Xmin'] -= increment
         elif axis in ['high_int', 'low_int']:
-            max_intensity = max(window.y_values)
-            if axis == 'high_int':
-                increment = 0.05 * max_intensity
-                if direction == 'increase':
-                    limits['Ymax'] += increment
-                elif direction == 'decrease':
-                    limits['Ymax'] = max(limits['Ymax'] - increment, limits['Ymin'])
-            elif axis == 'low_int':
-                increment = 0.02 * max_intensity
-                if direction == 'increase':
-                    limits['Ymin'] = min(limits['Ymin'] + increment, limits['Ymax'])
-                elif direction == 'decrease':
-                    limits['Ymin'] = max(limits['Ymin'] - increment, 0)
+            # Check if in multiple plot mode - EXACTLY AS IN ON_KEY_DEFS.PY
+            is_multiple_plot_mode = False
+            if hasattr(window, 'file_manager') and window.file_manager:
+                try:
+                    selected_sheets = window.file_manager.get_selected_sheet_names()
+                    is_multiple_plot_mode = len(selected_sheets) > 1
+                except:
+                    is_multiple_plot_mode = False
+
+            if hasattr(window, 'multiple_plot_mode'):
+                is_multiple_plot_mode = window.multiple_plot_mode
+
+            if is_multiple_plot_mode:
+                # For multiple plots: get max intensity from actual plotted data
+                all_lines = window.ax.lines
+                excluded_labels = ['Background', 'Overall Fit', 'Residuals', 'Envelope']
+                data_lines = []
+                for line in all_lines:
+                    label = line.get_label()
+                    # Exclude background, fit, residual lines and peaks
+                    if (label not in excluded_labels and
+                            not label.startswith('Peak') and
+                            not label.startswith('_') and
+                            label != ''):
+                        data_lines.append(line)
+
+                max_intensity = 0.00
+                for line in data_lines:
+                    y_data = line.get_ydata()
+                    if len(y_data) > 0:
+                        max_intensity = max(max_intensity, max(y_data))
+
+                # If no valid data found, fallback to current ylim
+                if max_intensity == 0.00:
+                    _, current_ymax = window.ax.get_ylim()
+                    max_intensity = current_ymax
+
+                # Get current limits directly from plot
+                ymin, ymax = window.ax.get_ylim()
+                intensity_factor = 0.05
+
+                if axis == 'high_int':
+                    if direction == 'decrease':
+                        new_ymax = max(ymax - intensity_factor * max_intensity, ymin)
+                    else:  # increase
+                        new_ymax = ymax + intensity_factor * max_intensity
+                    # Only update plot display, don't save to window.data for multiple plots
+                    window.ax.set_ylim(ymin, new_ymax)
+                    limits = {'Ymin': ymin, 'Ymax': new_ymax}
+                elif axis == 'low_int':
+                    intensity_factor = 0.02
+                    if direction == 'decrease':
+                        ymin = max(ymin - intensity_factor * max_intensity, 0.00)
+                    else:  # increase
+                        ymin = min(ymin + intensity_factor * max_intensity, ymax)
+                    # Only update plot display, don't save to window.data for multiple plots
+                    window.ax.set_ylim(ymin, ymax)
+                    limits = {'Ymin': ymin, 'Ymax': ymax}
+            else:
+                # Single plot mode: use existing behavior and SAVE to window.data
+                # EDX sheets always use Ymin = 0
+                if sheet_name.startswith('EDX~'):
+                    limits = self.get_plot_limits(window, sheet_name)
+                    limits['Ymin'] = 0.00
+                    intensity_factor = 0.05
+                    max_intensity = max(window.y_values)
+
+                    if axis == 'high_int':
+                        if direction == 'decrease':
+                            limits['Ymax'] = max(limits['Ymax'] - intensity_factor * max_intensity, limits['Ymin'])
+                        else:  # increase
+                            limits['Ymax'] += intensity_factor * max_intensity
+                        self.update_plot_limits(window, sheet_name, y_max=limits['Ymax'])
+                    elif axis == 'low_int':
+                        intensity_factor = 0.02
+                        if direction == 'decrease':
+                            limits['Ymin'] = max(limits['Ymin'] - intensity_factor * max_intensity, 0.00)
+                        else:  # increase
+                            limits['Ymin'] = min(limits['Ymin'] + intensity_factor * max_intensity, limits['Ymax'])
+                        self.update_plot_limits(window, sheet_name, y_min=limits['Ymin'])
+                    window.ax.set_ylim(limits['Ymin'], limits['Ymax'])
+                else:
+                    # Non-EDX sheets: normal behavior
+                    limits = self.get_plot_limits(window, sheet_name)
+                    intensity_factor = 0.05 if axis == 'high_int' else 0.02
+                    max_intensity = max(window.y_values)
+
+                    if axis == 'high_int':
+                        if direction == 'decrease':
+                            limits['Ymax'] = max(limits['Ymax'] - intensity_factor * max_intensity, limits['Ymin'])
+                        else:  # increase
+                            limits['Ymax'] += intensity_factor * max_intensity
+                        self.update_plot_limits(window, sheet_name, y_max=limits['Ymax'])
+                    elif axis == 'low_int':
+                        if direction == 'decrease':
+                            limits['Ymin'] = max(limits['Ymin'] - intensity_factor * max_intensity, 0.00)
+                        else:  # increase
+                            limits['Ymin'] = min(limits['Ymin'] + intensity_factor * max_intensity, limits['Ymax'])
+                        self.update_plot_limits(window, sheet_name, y_min=limits['Ymin'])
+                    window.ax.set_ylim(limits['Ymin'], limits['Ymax'])
+
+            # Check RSD visibility (common for both modes)
+            if hasattr(window.plot_manager, 'residuals_state') and window.plot_manager.residuals_state == 1:
+                residual_height = 1.07 * max(window.y_values)
+                if residual_height > limits['Ymax']:
+                    if hasattr(window.plot_manager, 'rsd_text') and window.plot_manager.rsd_text:
+                        window.plot_manager.rsd_text.remove()
+                        window.plot_manager.rsd_text = None
+                else:
+                    if hasattr(window.plot_manager, 'rsd_text') and window.plot_manager.rsd_text is None:
+                        from libraries.Peak_Functions import PeakFunctions
+                        rsd = PeakFunctions.calculate_rsd(window.y_values, window.background)
+                        if rsd is not None:
+                            x_min = window.ax.get_xlim()[1] + 0.4
+                            window.plot_manager.rsd_text = window.ax.text(x_min, residual_height,
+                                                                          f'RSD: {rsd:.2f}',
+                                                                          horizontalalignment='right',
+                                                                          verticalalignment='center',
+                                                                          fontsize=9,
+                                                                          color=window.plot_manager.residual_color,
+                                                                          alpha=window.plot_manager.residual_alpha + 0.2,
+                                                                          bbox=dict(facecolor='white',
+                                                                                    edgecolor='none'))
 
         # Check if EDX plot to use normal axis
         is_edx_plot = sheet_name == 'EDX~Plot' or sheet_name.startswith('EDX~Plot')
-        if is_edx_plot:
-            window.ax.set_xlim(limits['Xmin'], limits['Xmax'])  # Normal X-axis for EDX
-        else:
-            window.ax.set_xlim(limits['Xmax'], limits['Xmin'])  # Reverse X-axis
-            if window.energy_scale == 'KE':
-                window.ax.set_xlim(window.photons - limits['Xmax'], window.photons - limits['Xmin'])
-        window.ax.set_ylim(limits['Ymin'], limits['Ymax'])
+        if axis in ['high_be', 'low_be']:
+            if is_edx_plot:
+                window.ax.set_xlim(limits['Xmin'], limits['Xmax'])
+            else:
+                window.ax.set_xlim(limits['Xmax'], limits['Xmin'])
+                if window.energy_scale == 'KE':
+                    window.ax.set_xlim(window.photons - limits['Xmax'], window.photons - limits['Xmin'])
+
         window.canvas.draw_idle()
 
     def _adjust_edx_plot_limits(self, window, axis, direction):
