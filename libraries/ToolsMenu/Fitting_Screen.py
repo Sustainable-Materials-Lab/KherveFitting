@@ -1204,7 +1204,7 @@ class FittingWindow(wx.Frame):
                 bg_method = bg_data.get('Method', self.parent.background_method)
                 use_active_shirley = (bg_method == "Active Shirley")
                 use_active_tougaard = (bg_method == "Active Tougaard")
-                print(f"DEBUG: bg_data.get('Method')={bg_data.get('Method')}, self.parent.background_method={self.parent.background_method}, bg_method={bg_method}, use_active_shirley={use_active_shirley}")
+                # print(f"DEBUG: bg_data.get('Method')={bg_data.get('Method')}, self.parent.background_method={self.parent.background_method}, bg_method={bg_method}, use_active_shirley={use_active_shirley}")
 
             for i in range(1, iterations + 1):
                 self.current_fit_text.SetValue(f"{i}/{iterations}")
@@ -1233,8 +1233,6 @@ class FittingWindow(wx.Frame):
         import numpy as np
         from libraries.Peak_Functions import BackgroundCalculations
 
-        print("DEBUG: update_active_shirley_background called")  # ADD THIS LINE
-
         try:
             sheet_name = self.parent.sheet_combobox.GetValue()
             if sheet_name not in self.parent.Data['Core levels']:
@@ -1265,10 +1263,8 @@ class FittingWindow(wx.Frame):
                 if 'result' in self.parent.fit_results and self.parent.fit_results['result'] is not None:
                     y_peaks_filtered = self.parent.fit_results['result'].best_fit
                 else:
-                    print("DEBUG: fit_results exists but no result inside")
                     return
             else:
-                print("DEBUG: No fit_results on parent")
                 return
 
             num_points = int(self.averaging_points_text.GetValue()) if hasattr(self, 'averaging_points_text') else 5
@@ -1290,7 +1286,7 @@ class FittingWindow(wx.Frame):
             core_level_data['Background']['Active_Shirley_const'] = float(f"{const:.2f}")
 
             self.parent.background = current_background
-            print(f"Active Shirley updated: k={k:.6f}, const={const:.2f}")
+            # print(f"Active Shirley updated: k={k:.6f}, const={const:.2f}")
 
         except Exception as e:
             print(f"Error updating Active Shirley background: {e}")
@@ -1300,7 +1296,6 @@ class FittingWindow(wx.Frame):
         import numpy as np
         from libraries.Peak_Functions import BackgroundCalculations
 
-        print("DEBUG: update_active_tougaard_background called")
 
         try:
             sheet_name = self.parent.sheet_combobox.GetValue()
@@ -1332,10 +1327,8 @@ class FittingWindow(wx.Frame):
                 if 'result' in self.parent.fit_results and self.parent.fit_results['result'] is not None:
                     y_peaks_filtered = self.parent.fit_results['result'].best_fit
                 else:
-                    print("DEBUG: fit_results exists but no result inside")
                     return
             else:
-                print("DEBUG: No fit_results on parent")
                 return
 
             num_points = int(self.averaging_points_text.GetValue()) if hasattr(self, 'averaging_points_text') else 5

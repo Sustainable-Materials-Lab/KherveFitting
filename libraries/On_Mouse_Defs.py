@@ -1172,6 +1172,65 @@ class MouseEventHandler:
                 elif method == "Smart":
                     current_background = BackgroundCalculations.calculate_adaptive_single_smart_background(
                         x_values, y_values, (min_range, max_range), current_background, offset_h, offset_l)
+                elif method == "Active Shirley":
+                    # Check if we have stored k and const from previous fitting
+                    stored_k = self.window.Data['Core levels'][sheet_name]['Background'].get('Active_Shirley_k', None)
+                    stored_const = self.window.Data['Core levels'][sheet_name]['Background'].get('Active_Shirley_const', None)
+
+                    if stored_k is not None and stored_const is not None:
+                        # Use stored values to recalculate background with new offsets
+                        mask = (x_values >= min_range) & (x_values <= max_range)
+                        x_filtered = x_values[mask]
+                        y_filtered = y_values[mask]
+
+                        if len(x_filtered) > 0:
+                            # Recalculate const with new offset_l
+                            new_const = stored_const + offset_l
+                            dx = np.abs(np.mean(np.diff(x_filtered))) if len(x_filtered) > 1 else 1
+                            y_above_const = np.maximum(y_filtered - new_const, 0)
+
+                            # Vectorized cumulative integral
+                            cumulative_integral = np.cumsum(y_above_const[::-1])[::-1] * dx
+                            cumulative_integral = np.roll(cumulative_integral, -1)
+                            cumulative_integral[-1] = 0
+
+                            new_bg = new_const + stored_k * cumulative_integral
+                            current_background[mask] = new_bg
+                    else:
+                        # No stored values, use initial flat background
+                        current_background = BackgroundCalculations.calculate_adaptive_active_shirley_background(
+                            x_values, y_values, (min_range, max_range), current_background, offset_h, offset_l)
+                elif method == "Active Tougaard":
+                    stored_B = self.window.Data['Core levels'][sheet_name]['Background'].get('Active_Tougaard_B', None)
+
+                    if stored_B is not None:
+                        mask = (x_values >= min_range) & (x_values <= max_range)
+                        x_filtered = x_values[mask]
+                        y_filtered = y_values[mask]
+
+                        C = float(self.window.Data['Core levels'][sheet_name]['Background'].get('Tougaard_C', 1643))
+                        averaging_points = getattr(self.window, 'averaging_points', 5)
+
+                        if len(x_filtered) > 0:
+                            # Recalculate baseline with new offset_l
+                            baseline = BackgroundCalculations.calculate_endpoint_average(
+                                x_filtered, y_filtered, x_filtered[-1], averaging_points) + offset_l
+
+                            y_shifted = np.maximum(y_filtered - baseline, 0)
+                            dx = np.abs(np.mean(np.diff(x_filtered)))
+                            n = len(x_filtered)
+                            bg = np.zeros(n, dtype=float)
+
+                            # Vectorized Tougaard integral
+                            for j in range(n - 1):
+                                T = np.abs(x_filtered[j + 1:] - x_filtered[j])
+                                K = stored_B * T / ((C + T ** 2) ** 2)
+                                bg[j] = np.sum(K * y_shifted[j + 1:]) * dx
+
+                            current_background[mask] = bg + baseline
+                    else:
+                        current_background = BackgroundCalculations.calculate_adaptive_active_tougaard_background(
+                            x_values, y_values, (min_range, max_range), current_background, offset_h, offset_l)
                 else:
                     # Fallback to smart for unknown methods
                     current_background = BackgroundCalculations.calculate_adaptive_smart_background(
@@ -1371,7 +1430,7 @@ class MouseEventHandler:
 
                 sheet_name = self.window.sheet_combobox.GetValue()
                 if sheet_name in self.window.Data['Core levels']:
-                    print(f"Updating background vLine positions in window.data for sheet: {sheet_name}")
+                    # print(f"Updating background vLine positions in window.data for sheet: {sheet_name}")
                     if 'Background' not in self.window.Data['Core levels'][sheet_name]:
                         self.window.Data['Core levels'][sheet_name]['Background'] = {}
 
@@ -1402,12 +1461,12 @@ class MouseEventHandler:
                                 self.window.peak_params_grid.GetNumberRows() > 0 and
                                 not (hasattr(self.window, 'area_tab_selected') and self.window.area_tab_selected) and
                                 not (hasattr(self.window, 'background_window') and self.window.background_window is not None)):
-                            print("4. Updating peak fitting grid background columns...")
+                            # print("4. Updating peak fitting grid background columns...")
 
                             num_peaks = self.window.peak_params_grid.GetNumberRows() // 2
-                            print(f" 5.  - Number of peaks to update: {num_peaks}")
+                            # print(f" 5.  - Number of peaks to update: {num_peaks}")
                             for i in range(num_peaks):
-                                print(f"   - Updating peak {i + 1} background info")
+                                # print(f"   - Updating peak {i + 1} background info")
                                 row = i * 2
                                 # Update grid columns: 14=Bkg Type, 15=Bkg Low, 16=Bkg High
                                 self.window.peak_params_grid.SetCellValue(row, 14, self.window.background_method)
@@ -1495,7 +1554,7 @@ class MouseEventHandler:
             return
 
         elif self.window.moving_vline is not None:
-            print("1. Single vline drag ended, updating background vLine positions...")
+            # print("1. Single vline drag ended, updating background vLine positions...")
             # Store which vline was moved before resetting to None
             moved_vline = self.window.moving_vline
 
@@ -1563,13 +1622,13 @@ class MouseEventHandler:
                 if (overall_bg_low is not None and overall_bg_high is not None and
                         not (hasattr(self.window, 'area_tab_selected') and self.window.area_tab_selected) and
                         not (hasattr(self.window, 'background_window') and self.window.background_window is not None)):
-                    print(f"2. Setting overall background range: {overall_bg_low:.2f} - {overall_bg_high:.2f} eV")
+                    # print(f"2. Setting overall background range: {overall_bg_low:.2f} - {overall_bg_high:.2f} eV")
                     core_level_data['Background']['Bkg Low'] = float(overall_bg_low)
                     core_level_data['Background']['Bkg High'] = float(overall_bg_high)
 
                     # Update all peaks in Fitting section if they exist
                     if ('Fitting' in core_level_data and 'Peaks' in core_level_data['Fitting']):
-                        print("3. Updating all peak background parameters to match new overall range...")
+                        # print("3. Updating all peak background parameters to match new overall range...")
                         peaks = core_level_data['Fitting']['Peaks']
                         for peak_label, peak_data in peaks.items():
                             peak_data['Bkg Type'] = self.window.background_method
@@ -1583,12 +1642,12 @@ class MouseEventHandler:
                                 self.window.peak_params_grid.GetNumberRows() > 0 and
                                 not (hasattr(self.window, 'area_tab_selected') and self.window.area_tab_selected) and
                                 not (hasattr(self.window, 'background_window') and self.window.background_window is not None)):
-                            print("4. Updating peak fitting grid background columns...")
+                            # print("4. Updating peak fitting grid background columns...")
 
                             num_peaks = self.window.peak_params_grid.GetNumberRows() // 2
-                            print(f" 5.  - Number of peaks to update: {num_peaks}")
+                            # print(f" 5.  - Number of peaks to update: {num_peaks}")
                             for i in range(num_peaks):
-                                print(f"   - Updating peak {i + 1} background info")
+                                # print(f"   - Updating peak {i + 1} background info")
                                 row = i * 2
                                 # Update grid columns: 14=Bkg Type, 15=Bkg Low, 16=Bkg High
                                 self.window.peak_params_grid.SetCellValue(row, 14, self.window.background_method)
