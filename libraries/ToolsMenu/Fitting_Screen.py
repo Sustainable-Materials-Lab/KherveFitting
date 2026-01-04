@@ -2801,7 +2801,8 @@ class FittingWindow(wx.Frame):
         bg_source = core_level_data['Background']
 
         # Copy background properties with .2f formatting where applicable
-        for key in ['Bkg Type', 'Bkg Low', 'Bkg High', 'Bkg Offset Low', 'Bkg Offset High', 'Recorded_Ranges']:
+        for key in ['Bkg Type', 'Bkg Low', 'Bkg High', 'Bkg Offset Low', 'Bkg Offset High', 'Recorded_Ranges',
+                    'Active_Shirley_k', 'Active_Shirley_const', 'Active_Tougaard_B', 'Tougaard_C', 'Method']:
             if key in bg_source:
                 if key == 'Bkg Type':
                     background_data[key] = bg_source[key]
@@ -2817,10 +2818,16 @@ class FittingWindow(wx.Frame):
                         )
                         formatted_ranges.append(formatted_range)
                     background_data[key] = formatted_ranges
-                elif key in ['Bkg Low', 'Bkg High', 'Bkg Offset Low', 'Bkg Offset High']:
+                elif key in ['Bkg Low', 'Bkg High', 'Bkg Offset Low', 'Bkg Offset High', 'Tougaard_C']:
                     try:
                         value = float(bg_source[key])
-                        background_data[key] = f"{value:.2f}"
+                        background_data[key] = float(f"{value:.2f}")
+                    except (ValueError, TypeError):
+                        background_data[key] = bg_source[key]
+                elif key in ['Active_Shirley_k', 'Active_Shirley_const', 'Active_Tougaard_B']:
+                    try:
+                        value = float(bg_source[key])
+                        background_data[key] = float(f"{value:.6f}") if 'k' in key else float(f"{value:.2f}")
                     except (ValueError, TypeError):
                         background_data[key] = bg_source[key]
                 else:
@@ -2870,7 +2877,8 @@ class FittingWindow(wx.Frame):
             target_bg['Bkg X'] = target_core_level['B.E.'][:]
 
         # Copy properties from clipboard
-        for key in ['Bkg Type', 'Bkg Low', 'Bkg High', 'Bkg Offset Low', 'Bkg Offset High', 'Recorded_Ranges']:
+        for key in ['Bkg Type', 'Bkg Low', 'Bkg High', 'Bkg Offset Low', 'Bkg Offset High', 'Recorded_Ranges',
+                    'Active_Shirley_k', 'Active_Shirley_const', 'Active_Tougaard_B', 'Tougaard_C', 'Method']:
             if key in background_data:
                 target_bg[key] = background_data[key]
 
@@ -2932,10 +2940,25 @@ class FittingWindow(wx.Frame):
                     print(f"No peaks to fit for {sheet_name}, skipping...")
                     continue
 
+                # Check if using Active background method
+                bg_method = None
+                if sheet_name in self.parent.Data['Core levels']:
+                    bg_method = self.parent.Data['Core levels'][sheet_name]['Background'].get('Method')
+                    if bg_method is None:
+                        bg_method = self.parent.Data['Core levels'][sheet_name]['Background'].get('Bkg Type')
+
+                use_active_shirley = (bg_method == "Active Shirley")
+                use_active_tougaard = (bg_method == "Active Tougaard")
+
                 # Perform multiple iterations of fitting
                 for iteration in range(iterations):
                     result = fit_peaks(self.parent, self.parent.peak_params_grid)
                     if result:
+                        # Update active background if applicable
+                        if use_active_shirley:
+                            self.update_active_shirley_background()
+                        elif use_active_tougaard:
+                            self.update_active_tougaard_background()
                         self.parent.clear_and_replot()
                     wx.Yield()
 

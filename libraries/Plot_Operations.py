@@ -3426,6 +3426,55 @@ class PlotManager:
                 x_values_filtered, y_values_filtered, lambda_val=lambda_val, p=p_val
             )
             label = 'Background (ALS-Raman)'
+        elif method == "Active Shirley":
+            # Check if we have stored k and const from previous fitting
+            stored_k = window.Data['Core levels'][sheet_name]['Background'].get('Active_Shirley_k', None)
+            stored_const = window.Data['Core levels'][sheet_name]['Background'].get('Active_Shirley_const', None)
+
+            if stored_k is not None and stored_const is not None:
+                # Use stored values to recalculate background
+                dx = np.abs(np.mean(np.diff(x_values_filtered))) if len(x_values_filtered) > 1 else 1
+                y_above_const = np.maximum(y_values_filtered - stored_const, 0)
+
+                # Cumulative integral from low BE toward high BE
+                cumulative_integral = np.cumsum(y_above_const[::-1])[::-1] * dx
+                cumulative_integral = np.roll(cumulative_integral, -1)
+                cumulative_integral[-1] = 0
+
+                background_filtered = stored_const + stored_k * cumulative_integral
+            else:
+                # No stored values, use initial flat background
+                background_filtered = BackgroundCalculations.calculate_active_shirley_background(
+                    x_values_filtered, y_values_filtered, offset_h, offset_l, num_points=averaging_points)
+            label = 'Background (Active Shirley)'
+        elif method == "Active Tougaard":
+            # Check if we have stored B from previous fitting
+            stored_B = window.Data['Core levels'][sheet_name]['Background'].get('Active_Tougaard_B', None)
+
+            if stored_B is not None:
+                C = float(window.Data['Core levels'][sheet_name]['Background'].get('Tougaard_C', 1643))
+
+                # Get baseline at low BE
+                baseline = BackgroundCalculations.calculate_endpoint_average(
+                    x_values_filtered, y_values_filtered, x_values_filtered[-1], averaging_points) + offset_l
+
+                y_shifted = np.maximum(y_values_filtered - baseline, 0)
+                dx = np.abs(np.mean(np.diff(x_values_filtered)))
+                n = len(x_values_filtered)
+                bg = np.zeros(n, dtype=float)
+
+                # Vectorized Tougaard integral
+                for i in range(n - 1):
+                    T = np.abs(x_values_filtered[i + 1:] - x_values_filtered[i])
+                    K = stored_B * T / ((C + T ** 2) ** 2)
+                    bg[i] = np.sum(K * y_shifted[i + 1:]) * dx
+
+                background_filtered = bg + baseline
+            else:
+                # No stored values, use initial flat background
+                background_filtered = BackgroundCalculations.calculate_active_tougaard_background(
+                    x_values_filtered, y_values_filtered, offset_h, offset_l, num_points=averaging_points)
+            label = 'Background (Active Tougaard)'
         else:
             background_filtered = BackgroundCalculations.calculate_smart_background(x_values_filtered,
                                                                                     y_values_filtered, offset_h,

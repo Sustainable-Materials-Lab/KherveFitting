@@ -1129,6 +1129,7 @@ class MouseEventHandler:
                         current_background = BackgroundCalculations.calculate_adaptive_active_shirley_background(
                             x_values, y_values, (min_range, max_range), current_background, offset_h, offset_l)
                 elif method == "Active Tougaard":
+                    print('Active Tougaard')
                     stored_B = self.window.Data['Core levels'][sheet_name]['Background'].get('Active_Tougaard_B', None)
 
                     if stored_B is not None:

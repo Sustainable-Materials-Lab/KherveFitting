@@ -1337,7 +1337,9 @@ class BackgroundCalculations:
                 except:
                     return 1e10
 
-            result = minimize_scalar(objective, bounds=(100, 1000000), method='bounded')
+            # result = minimize_scalar(objective, bounds=(100, 1000000), method='bounded')
+            result = minimize_scalar(objective, bounds=(100, 1000000), method='bounded',
+                                     options={'xatol': 1.0, 'maxiter': 10})
             B = result.x
 
         background = calculate_tougaard_integral(B)
