@@ -8,6 +8,7 @@ from scipy.signal import convolve
 from scipy.interpolate import interp1d
 from scipy.ndimage import gaussian_filter
 from lmfitxps.backgrounds import shirley_calculate
+from lmfitxps import models as lmfitxps_models
 
 import numpy as np
 
@@ -1075,6 +1076,293 @@ class BackgroundCalculations:
         return oscillation_ratio < smoothness_threshold and excessive_points < 0.25
 
     @staticmethod
+    def calculate_active_shirley_background(x, y, offset_h, offset_l, num_points=5):
+        """
+        Calculate initial Active Shirley background - a flat offset at the low BE endpoint.
+        The actual Shirley background will be recalculated after each fitting iteration.
+
+        Args:
+            x (array): X-axis values (binding energy)
+            y (array): Y-axis values (intensity)
+            offset_h (float): High BE offset
+            offset_l (float): Low BE offset
+            num_points (int): Number of points for endpoint averaging
+
+        Returns:
+            array: Initial flat background at low BE level
+        """
+        x, y = np.asarray(x), np.asarray(y)
+
+        y_start = BackgroundCalculations.calculate_endpoint_average(x, y, x[0], num_points) + offset_h
+        y_end = BackgroundCalculations.calculate_endpoint_average(x, y, x[-1], num_points) + offset_l
+
+        if x[0] > x[-1]:  # BE scale
+            baseline = y_end
+        else:
+            baseline = y_start
+
+        return np.full_like(y, baseline, dtype=float)
+
+    @staticmethod
+    def calculate_active_shirley_from_peaks_OLD(x, y_raw, y_peaks, k=None, num_points=5, offset_h=0, offset_l=0):
+        """
+        Calculate Shirley background from fitted peak intensities (Active Shirley method).
+        B(E) = const + k * integral from E to E_max of peaks(E') dE'
+
+        Args:
+            x (array): X-axis values (binding energy)
+            y_raw (array): Raw intensity data
+            y_peaks (array): Fitted peak intensities (sum of all peaks)
+            k (float): Shirley scaling parameter. If None, auto-calculated.
+            num_points (int): Number of points for endpoint averaging
+            offset_h (float): High BE offset (left side)
+            offset_l (float): Low BE offset (right side)
+
+        Returns:
+            tuple: (background array, fitted k value, const value)
+        """
+        x = np.asarray(x)
+        y_raw = np.asarray(y_raw)
+        y_peaks = np.maximum(np.asarray(y_peaks), 0)
+
+        if x[0] > x[-1]:  # BE scale (decreasing)
+            const = BackgroundCalculations.calculate_endpoint_average(x, y_raw, x[-1], num_points) + offset_l
+            dx = np.abs(np.mean(np.diff(x)))
+            cumulative_integral = np.zeros_like(y_peaks)
+            for i in range(len(x) - 2, -1, -1):
+                cumulative_integral[i] = cumulative_integral[i + 1] + y_peaks[i + 1] * dx
+            else:  # KE scale
+                const = BackgroundCalculations.calculate_endpoint_average(x, y_raw, x[0], num_points) + offset_l
+            dx = np.abs(np.mean(np.diff(x)))
+            cumulative_integral = np.zeros_like(y_peaks)
+            for i in range(1, len(x)):
+                cumulative_integral[i] = cumulative_integral[i - 1] + y_peaks[i - 1] * dx
+
+        if k is None:
+            if x[0] > x[-1]:
+                high_be_raw = BackgroundCalculations.calculate_endpoint_average(x, y_raw, x[0], num_points) + offset_h
+                high_be_peaks = np.mean(y_peaks[:num_points])
+                total_integral = cumulative_integral[0]
+            else:
+                high_be_raw = BackgroundCalculations.calculate_endpoint_average(x, y_raw, x[-1], num_points) + offset_h
+                high_be_peaks = np.mean(y_peaks[-num_points:])
+                total_integral = cumulative_integral[-1]
+
+            if total_integral > 0:
+                k = max(0, (high_be_raw - high_be_peaks - const) / total_integral)
+            else:
+                k = 0.001
+
+        background = const + k * cumulative_integral
+        return background, k, const
+
+    @staticmethod
+    def calculate_active_shirley_from_peaks(x, y_raw, y_peaks, k=None, num_points=5, offset_h=0, offset_l=0):
+        """
+        Calculate Shirley background from fitted peak intensities (Active Shirley method).
+
+        The background at low BE equals const (baseline).
+        The background rises toward high BE proportionally to cumulative peak area.
+        B(E) = const + k * integral from E to low_BE of peaks(E') dE'
+
+        Args:
+            x (array): X-axis values (binding energy)
+            y_raw (array): Raw intensity data (used for baseline reference)
+            y_peaks (array): Fitted peak intensities (sum of all peaks, background-subtracted)
+            k (float): Shirley scaling parameter. If None, auto-calculated.
+            num_points (int): Number of points for endpoint averaging
+            offset_h (float): High BE offset (left side)
+            offset_l (float): Low BE offset (right side)
+
+        Returns:
+            tuple: (background array, fitted k value, const value)
+        """
+        x = np.asarray(x)
+        y_raw = np.asarray(y_raw)
+        y_peaks = np.maximum(np.asarray(y_peaks), 0)
+
+        dx = np.abs(np.mean(np.diff(x))) if len(x) > 1 else 1
+
+        if x[0] > x[-1]:  # BE scale (high BE on left, low BE on right)
+            # const is the baseline at low BE (right side)
+            const = BackgroundCalculations.calculate_endpoint_average(x, y_raw, x[-1], num_points) + offset_l
+
+            # Cumulative integral from low BE (right) toward high BE (left)
+            # cumulative_integral[i] = integral from i to end (low BE)
+            cumulative_integral = np.zeros_like(y_peaks, dtype=float)
+            for i in range(len(x) - 2, -1, -1):
+                cumulative_integral[i] = cumulative_integral[i + 1] + y_peaks[i + 1] * dx
+
+            # Calculate k if not provided
+            # k is chosen so that background + peaks ≈ raw at high BE
+            if k is None:
+                high_be_raw = BackgroundCalculations.calculate_endpoint_average(x, y_raw, x[0], num_points) + offset_h
+                high_be_peaks = np.mean(y_peaks[:num_points])
+                total_integral = cumulative_integral[0]
+
+                if total_integral > 0:
+                    # At high BE: raw ≈ background + peaks
+                    # raw ≈ (const + k * total_integral) + peaks
+                    # k = (raw - peaks - const) / total_integral
+                    k = (high_be_raw - high_be_peaks - const) / total_integral
+                    k = max(0, k)  # k must be non-negative
+                else:
+                    k = 0.0
+
+        else:  # KE scale (low values on left)
+            const = BackgroundCalculations.calculate_endpoint_average(x, y_raw, x[0], num_points) + offset_l
+
+            cumulative_integral = np.zeros_like(y_peaks, dtype=float)
+            for i in range(1, len(x)):
+                cumulative_integral[i] = cumulative_integral[i - 1] + y_peaks[i - 1] * dx
+
+            if k is None:
+                high_be_raw = BackgroundCalculations.calculate_endpoint_average(x, y_raw, x[-1], num_points) + offset_h
+                high_be_peaks = np.mean(y_peaks[-num_points:])
+                total_integral = cumulative_integral[-1]
+
+                if total_integral > 0:
+                    k = (high_be_raw - high_be_peaks - const) / total_integral
+                    k = max(0, k)
+                else:
+                    k = 0.0
+
+        # Calculate background: starts at const, rises with cumulative integral
+        background = const + k * cumulative_integral
+
+        return background, k, const
+
+    @staticmethod
+    def calculate_adaptive_active_shirley_background(x, y, x_range, previous_background, offset_h, offset_l, num_points=5):
+        """Calculate initial Active Shirley background for a selected range."""
+        previous_background = np.array(previous_background)
+        mask = (x >= x_range[0]) & (x <= x_range[1])
+        new_background = np.copy(previous_background)
+        x_selected, y_selected = x[mask], y[mask]
+
+        active_shirley_bg = BackgroundCalculations.calculate_active_shirley_background(
+            x_selected, y_selected, offset_h, offset_l, num_points)
+        new_background[mask] = active_shirley_bg
+
+        return new_background
+
+    @staticmethod
+    def calculate_active_tougaard_background(x, y, offset_h, offset_l, num_points=5):
+        """
+        Calculate initial Active Tougaard background - a flat offset at the low BE endpoint.
+        This serves as the starting point; the actual Tougaard background will be
+        recalculated after each fitting iteration based on the fitted peaks.
+
+        Args:
+            x (array): X-axis values (binding energy)
+            y (array): Y-axis values (intensity)
+            offset_h (float): High BE offset
+            offset_l (float): Low BE offset
+            num_points (int): Number of points for endpoint averaging
+
+        Returns:
+            array: Initial flat background at low BE level
+        """
+        x, y = np.asarray(x), np.asarray(y)
+
+        y_start = BackgroundCalculations.calculate_endpoint_average(x, y, x[0], num_points) + offset_h
+        y_end = BackgroundCalculations.calculate_endpoint_average(x, y, x[-1], num_points) + offset_l
+
+        if x[0] > x[-1]:  # BE scale
+            baseline = y_end
+        else:
+            baseline = y_start
+
+        return np.full_like(y, baseline, dtype=float)
+
+    @staticmethod
+    def calculate_active_tougaard_from_peaks(x, y_raw, y_peaks, B=None, C=1643, D=0,
+                                             num_points=5, offset_h=0, offset_l=0):
+        """
+        Calculate Tougaard background from fitted peak intensities (Active Tougaard method).
+        """
+        from scipy.optimize import minimize_scalar
+
+        x = np.asarray(x)
+        y_raw = np.asarray(y_raw)
+        y_peaks = np.maximum(np.asarray(y_peaks), 0)
+
+        n = len(x)
+        dx = np.abs(np.mean(np.diff(x))) if n > 1 else 1
+
+        # Get baseline at low BE (same as U2-Tougaard)
+        baseline = BackgroundCalculations.calculate_endpoint_average(x, y_raw, x[-1], num_points) + offset_l
+        print(f"DEBUG Active Tougaard: baseline={baseline:.2f}")
+
+        # High BE position for fitting target
+        high_be_position = x[0]
+
+        # Target intensity at high BE
+        target_intensity = BackgroundCalculations.calculate_endpoint_average(x, y_raw, high_be_position, num_points) + offset_h
+        print(f"DEBUG Active Tougaard: target_intensity at high BE={target_intensity:.2f}")
+
+        def calculate_tougaard_integral(B_val):
+            """Calculate Tougaard background using envelope (peaks)
+
+            For BE scale (x[0]=high BE, x[-1]=low BE):
+            - At low BE (x[-1]): integral should be 0, background = baseline
+            - At high BE (x[0]): integral is max, background = baseline + integral
+
+            We integrate from current position toward LOWER BE (higher indices).
+            """
+            bg = np.zeros(n, dtype=float)
+
+            for i in range(n):
+                integral_sum = 0.0
+                # Integrate over all points with LOWER BE (higher indices, j > i)
+                for j in range(i + 1, n):
+                    T = abs(x[j] - x[i])  # Energy loss T = E' - E
+                    if T > 0:
+                        # U2-Tougaard kernel: K = B * T / ((C + T²)²)
+                        K = B_val * T / ((C + T ** 2) ** 2)
+                        integral_sum += K * y_peaks[j] * dx
+                bg[i] = integral_sum
+
+            return bg + baseline
+
+        if B is None:
+            def objective(B_val):
+                try:
+                    bg_temp = calculate_tougaard_integral(B_val)
+                    bg_at_high_be = BackgroundCalculations.calculate_endpoint_average(x, bg_temp, high_be_position, num_points)
+                    peaks_at_high_be = np.mean(y_peaks[:num_points])
+                    calculated_total = bg_at_high_be + peaks_at_high_be
+                    error = (calculated_total - target_intensity) ** 2
+                    return error
+                except:
+                    return 1e10
+
+            result = minimize_scalar(objective, bounds=(100, 1000000), method='bounded')
+            B = result.x
+
+        background = calculate_tougaard_integral(B)
+
+        # Check: at low BE, integral should be ~0, so background should be ~baseline
+        integral_at_low_be = background[-1] - baseline
+        print(f"DEBUG Active Tougaard: integral at low BE (should be ~0)={integral_at_low_be:.2f}")
+
+        return background, B
+
+    @staticmethod
+    def calculate_adaptive_active_tougaard_background(x, y, x_range, previous_background, offset_h, offset_l, num_points=5):
+        """Calculate initial Active Tougaard background for a selected range."""
+        previous_background = np.array(previous_background)
+        mask = (x >= x_range[0]) & (x <= x_range[1])
+        new_background = np.copy(previous_background)
+        x_selected, y_selected = x[mask], y[mask]
+
+        active_tougaard_bg = BackgroundCalculations.calculate_active_tougaard_background(
+            x_selected, y_selected, offset_h, offset_l, num_points)
+        new_background[mask] = active_tougaard_bg
+
+        return new_background
+
+    @staticmethod
     def calculate_smart_background(x, y, offset_h, offset_l, num_points=5):
         """
         Calculate a 'smart' background by choosing between Shirley and linear backgrounds.
@@ -1136,36 +1424,7 @@ class BackgroundCalculations:
 
         return background
 
-    @staticmethod
-    def calculate_adaptive_smart_background_OLD(x, y, x_range, previous_background, offset_h, offset_l, num_points=5):
-        """
-        Calculate an Multi-Regions Smart background for a selected range.
 
-        Args:
-            x (array): X-axis values
-            y (array): Y-axis values
-            x_range (tuple): Range of x values to calculate background for
-            previous_background (array): Previous background calculation
-            offset_h (float): High offset
-            offset_l (float): Low offset
-
-        Returns:
-            array: Multi-Regions Smart background
-        """
-        previous_background = np.array(previous_background)
-        mask = (x >= x_range[0]) & (x <= x_range[1])
-        new_background = np.copy(previous_background)
-        x_selected, y_selected = x[mask], y[mask]
-
-        # Determine background type for selected range
-        if y_selected[0] > y_selected[-1]:
-            new_background[mask] = BackgroundCalculations.calculate_shirley_background(x_selected, y_selected, offset_h,
-                                                                                       offset_l, num_points)
-        else:
-            new_background[mask] = BackgroundCalculations.calculate_linear_background(x_selected, y_selected, offset_h,
-                                                                                      offset_l, num_points)
-
-        return new_background
 
     @staticmethod
     def calculate_adaptive_smart_background(x, y, x_range, previous_background, offset_h, offset_l, num_points=5):

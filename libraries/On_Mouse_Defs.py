@@ -1097,6 +1097,74 @@ class MouseEventHandler:
                 elif method == "Linear":
                     current_background = BackgroundCalculations.calculate_adaptive_linear_background(
                         x_values, y_values, (min_range, max_range), current_background, offset_h, offset_l)
+                elif method == "Active Shirley":
+                    # Check if we have stored k and const from previous fitting
+                    stored_k = self.window.Data['Core levels'][sheet_name]['Background'].get('Active_Shirley_k', None)
+                    stored_const = self.window.Data['Core levels'][sheet_name]['Background'].get('Active_Shirley_const', None)
+
+                    if stored_k is not None and stored_const is not None:
+                        # Use stored values to recalculate background with new range
+                        mask = (x_values >= min_range) & (x_values <= max_range)
+                        x_filtered = x_values[mask]
+                        y_filtered = y_values[mask]
+
+                        # Recalculate using stored k (peaks not available, use raw-const as proxy)
+                        # This gives a Shirley-like curve based on stored parameters
+                        if len(x_filtered) > 0:
+                            dx = np.abs(np.mean(np.diff(x_filtered))) if len(x_filtered) > 1 else 1
+                            y_above_const = np.maximum(y_filtered - stored_const, 0)
+
+                            cumulative_integral = np.zeros_like(y_above_const)
+                            if x_filtered[0] > x_filtered[-1]:  # BE scale
+                                for idx in range(len(x_filtered) - 2, -1, -1):
+                                    cumulative_integral[idx] = cumulative_integral[idx + 1] + y_above_const[idx + 1] * dx
+                            else:
+                                for idx in range(1, len(x_filtered)):
+                                    cumulative_integral[idx] = cumulative_integral[idx - 1] + y_above_const[idx - 1] * dx
+
+                            new_bg = stored_const + stored_k * cumulative_integral
+                            current_background[mask] = new_bg
+                    else:
+                        # No stored values, use initial flat background
+                        current_background = BackgroundCalculations.calculate_adaptive_active_shirley_background(
+                            x_values, y_values, (min_range, max_range), current_background, offset_h, offset_l)
+                elif method == "Active Tougaard":
+                    stored_B = self.window.Data['Core levels'][sheet_name]['Background'].get('Active_Tougaard_B', None)
+
+                    if stored_B is not None:
+                        # Use stored B to recalculate background using raw data (like U2-Tougaard)
+                        mask = (x_values >= min_range) & (x_values <= max_range)
+                        x_filtered = x_values[mask]
+                        y_filtered = y_values[mask]
+
+                        C = float(self.window.Data['Core levels'][sheet_name]['Background'].get('Tougaard_C', 1643))
+                        averaging_points = getattr(self.window, 'averaging_points', 5)
+
+                        if len(x_filtered) > 0:
+                            # Get baseline at low BE
+                            baseline = BackgroundCalculations.calculate_endpoint_average(
+                                x_filtered, y_filtered, x_filtered[-1], averaging_points) + offset_l
+
+                            y_shifted = y_filtered - baseline
+                            dx = np.abs(np.mean(np.diff(x_filtered)))
+                            n = len(x_filtered)
+                            bg = np.zeros(n, dtype=float)
+
+                            # Calculate Tougaard integral (same as U2-Tougaard)
+                            for i in range(n):
+                                E_prime_minus_E = x_filtered[:i] - x_filtered[i] if x_filtered[0] > x_filtered[-1] else x_filtered[i + 1:] - x_filtered[i]
+                                E_prime_minus_E = np.abs(E_prime_minus_E)
+                                if len(E_prime_minus_E) > 0:
+                                    K = stored_B * E_prime_minus_E / ((C + E_prime_minus_E ** 2) ** 2)
+                                    if x_filtered[0] > x_filtered[-1]:
+                                        bg[i] = np.trapz(K * y_shifted[:i], dx=dx) if i > 0 else 0
+                                    else:
+                                        bg[i] = np.trapz(K * y_shifted[i + 1:], dx=dx) if i < n - 1 else 0
+
+                            current_background[mask] = bg + baseline
+                    else:
+                        current_background = BackgroundCalculations.calculate_adaptive_active_tougaard_background(
+                            x_values, y_values, (min_range, max_range), current_background, offset_h, offset_l)
                 elif method == "Arctan-XAS":
                     current_background = BackgroundCalculations.calculate_adaptive_arctan_background(
                         x_values, y_values, (min_range, max_range), current_background, offset_h, offset_l)

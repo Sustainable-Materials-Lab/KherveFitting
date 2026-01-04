@@ -157,7 +157,9 @@ class FittingWindow(wx.Frame):
         method_label = wx.StaticText(self.background_panel, label="Method:")
         if self.normal:
             self.method_combobox = wx.ComboBox(self.background_panel, choices=["Smart", "Shirley",
-                                                "Linear","Offset", 'U4-Tougaard', 'U2-Tougaard',"ALS-Raman", "Arctan-XAS"],
+                                                "Linear","Offset", 'U4-Tougaard', 'U2-Tougaard',
+                                                "Active Background------", "Active Shirley", "Active Tougaard",
+                                                "Other Techniques-------","ALS-Raman", "Arctan-XAS"],
                                                style=wx.CB_READONLY)
         else:
             self.method_combobox = wx.ComboBox(self.background_panel, choices=["Smart",'U2-Tougaard'],
@@ -1181,7 +1183,6 @@ class FittingWindow(wx.Frame):
         save_state(self.parent)
         remove_peak(self.parent)
 
-
     def on_fit_multi(self, event):
         save_state(self.parent)
         if self.parent.peak_params_grid.GetNumberRows() == 0:
@@ -1194,18 +1195,178 @@ class FittingWindow(wx.Frame):
         try:
             save_state(self.parent)
             iterations = self.fit_iterations_spin.GetValue()
+
+            # Check if Active Shirley is selected
+            sheet_name = self.parent.sheet_combobox.GetValue()
+            use_active_shirley = False
+            if sheet_name in self.parent.Data['Core levels']:
+                bg_data = self.parent.Data['Core levels'][sheet_name].get('Background', {})
+                bg_method = bg_data.get('Method', self.parent.background_method)
+                use_active_shirley = (bg_method == "Active Shirley")
+                use_active_tougaard = (bg_method == "Active Tougaard")
+                print(f"DEBUG: bg_data.get('Method')={bg_data.get('Method')}, self.parent.background_method={self.parent.background_method}, bg_method={bg_method}, use_active_shirley={use_active_shirley}")
+
             for i in range(1, iterations + 1):
                 self.current_fit_text.SetValue(f"{i}/{iterations}")
                 result = fit_peaks(self.parent, self.parent.peak_params_grid)
                 if result:
                     r_squared, rsd, red_chi_square = result
                     self.update_fit_indicators(r_squared, rsd, red_chi_square)
+
+                # If Active Shirley, recalculate background from fitted peaks
+                if use_active_shirley and hasattr(self.parent, 'fit_results') and self.parent.fit_results is not None:
+                    self.update_active_shirley_background()
+
+                # If Active Tougaard, recalculate background from fitted peaks
+                if use_active_tougaard and hasattr(self.parent, 'fit_results') and self.parent.fit_results is not None:
+                    self.update_active_tougaard_background()
+
                 self.parent.clear_and_replot()
                 wx.Yield()
             self.current_fit_text.SetValue("Complete")
         finally:
             # Always re-enable UI controls, even if fitting fails
             self.enable_fitting_ui()
+
+    def update_active_shirley_background(self):
+        """Recalculate the Shirley background based on fitted peak intensities."""
+        import numpy as np
+        from libraries.Peak_Functions import BackgroundCalculations
+
+        print("DEBUG: update_active_shirley_background called")  # ADD THIS LINE
+
+        try:
+            sheet_name = self.parent.sheet_combobox.GetValue()
+            if sheet_name not in self.parent.Data['Core levels']:
+                return
+
+            core_level_data = self.parent.Data['Core levels'][sheet_name]
+            x_values = np.array(core_level_data['B.E.'])
+            y_raw = np.array(core_level_data['Raw Data'])
+
+            if hasattr(self, 'get_overall_background_range'):
+                bg_min, bg_max = self.get_overall_background_range()
+            else:
+                bg_min = core_level_data['Background'].get('Bkg Low', min(x_values))
+                bg_max = core_level_data['Background'].get('Bkg High', max(x_values))
+
+            try:
+                bg_min = float(bg_min)
+                bg_max = float(bg_max)
+            except (ValueError, TypeError):
+                bg_min = min(x_values)
+                bg_max = max(x_values)
+
+            mask = (x_values >= bg_min) & (x_values <= bg_max)
+            x_filtered = x_values[mask]
+            y_raw_filtered = y_raw[mask]
+
+            if hasattr(self.parent, 'fit_results') and self.parent.fit_results is not None:
+                if 'result' in self.parent.fit_results and self.parent.fit_results['result'] is not None:
+                    y_peaks_filtered = self.parent.fit_results['result'].best_fit
+                else:
+                    print("DEBUG: fit_results exists but no result inside")
+                    return
+            else:
+                print("DEBUG: No fit_results on parent")
+                return
+
+            num_points = int(self.averaging_points_text.GetValue()) if hasattr(self, 'averaging_points_text') else 5
+
+            # Get offsets from stored data
+            offset_h = float(core_level_data['Background'].get('Bkg Offset High', 0))
+            offset_l = float(core_level_data['Background'].get('Bkg Offset Low', 0))
+
+            new_bg_filtered, k, const = BackgroundCalculations.calculate_active_shirley_from_peaks(
+                x_filtered, y_raw_filtered, y_peaks_filtered, k=None, num_points=num_points,
+                offset_h=offset_h, offset_l=offset_l
+            )
+
+            current_background = np.array(core_level_data['Background']['Bkg Y'])
+            current_background[mask] = new_bg_filtered
+
+            core_level_data['Background']['Bkg Y'] = current_background.tolist()
+            core_level_data['Background']['Active_Shirley_k'] = float(f"{k:.6f}")
+            core_level_data['Background']['Active_Shirley_const'] = float(f"{const:.2f}")
+
+            self.parent.background = current_background
+            print(f"Active Shirley updated: k={k:.6f}, const={const:.2f}")
+
+        except Exception as e:
+            print(f"Error updating Active Shirley background: {e}")
+
+    def update_active_tougaard_background(self):
+        """Recalculate the Tougaard background based on fitted peak intensities (envelope)."""
+        import numpy as np
+        from libraries.Peak_Functions import BackgroundCalculations
+
+        print("DEBUG: update_active_tougaard_background called")
+
+        try:
+            sheet_name = self.parent.sheet_combobox.GetValue()
+            if sheet_name not in self.parent.Data['Core levels']:
+                return
+
+            core_level_data = self.parent.Data['Core levels'][sheet_name]
+            x_values = np.array(core_level_data['B.E.'])
+            y_raw = np.array(core_level_data['Raw Data'])
+
+            if hasattr(self, 'get_overall_background_range'):
+                bg_min, bg_max = self.get_overall_background_range()
+            else:
+                bg_min = core_level_data['Background'].get('Bkg Low', min(x_values))
+                bg_max = core_level_data['Background'].get('Bkg High', max(x_values))
+
+            try:
+                bg_min = float(bg_min)
+                bg_max = float(bg_max)
+            except (ValueError, TypeError):
+                bg_min = min(x_values)
+                bg_max = max(x_values)
+
+            mask = (x_values >= bg_min) & (x_values <= bg_max)
+            x_filtered = x_values[mask]
+            y_raw_filtered = y_raw[mask]
+
+            if hasattr(self.parent, 'fit_results') and self.parent.fit_results is not None:
+                if 'result' in self.parent.fit_results and self.parent.fit_results['result'] is not None:
+                    y_peaks_filtered = self.parent.fit_results['result'].best_fit
+                else:
+                    print("DEBUG: fit_results exists but no result inside")
+                    return
+            else:
+                print("DEBUG: No fit_results on parent")
+                return
+
+            num_points = int(self.averaging_points_text.GetValue()) if hasattr(self, 'averaging_points_text') else 5
+
+            # Get offsets from stored data
+            offset_h = float(core_level_data['Background'].get('Bkg Offset High', 0))
+            offset_l = float(core_level_data['Background'].get('Bkg Offset Low', 0))
+
+            # Get Tougaard C parameter (use default or stored value)
+            C = float(core_level_data['Background'].get('Tougaard_C', 1643))
+
+            new_bg_filtered, B = BackgroundCalculations.calculate_active_tougaard_from_peaks(
+                x_filtered, y_raw_filtered, y_peaks_filtered,
+                B=None, C=C, num_points=num_points,
+                offset_h=offset_h, offset_l=offset_l
+            )
+
+            current_background = np.array(core_level_data['Background']['Bkg Y'])
+            current_background[mask] = new_bg_filtered
+
+            core_level_data['Background']['Bkg Y'] = current_background.tolist()
+            core_level_data['Background']['Active_Tougaard_B'] = float(f"{B:.2f}")
+
+            self.parent.background = current_background
+            print(f"Active Tougaard updated: B={B:.2f}, C={C:.2f}")
+
+        except Exception as e:
+            print(f"Error updating Active Tougaard background: {e}")
+            import traceback
+            traceback.print_exc()
+
 
 
     def on_fit_peaks(self, event):
@@ -1214,6 +1375,18 @@ class FittingWindow(wx.Frame):
         if result:
             r_squared, rsd, red_chi_squared = result
             self.update_fit_indicators(r_squared, rsd, red_chi_squared)
+
+            # If Active Shirley, also update background after single fit
+            sheet_name = self.parent.sheet_combobox.GetValue()
+            if sheet_name in self.parent.Data['Core levels']:
+                bg_data = self.parent.Data['Core levels'][sheet_name].get('Background', {})
+                bg_method = bg_data.get('Method', self.parent.background_method)
+                if bg_method == "Active Shirley":
+                    self.update_active_shirley_background()
+                    self.parent.clear_and_replot()
+                elif bg_method == "Active Tougaard":
+                    self.update_active_tougaard_background()
+                    self.parent.clear_and_replot()
         else:
             print("Fitting failed or was cancelled.")
 
@@ -1691,6 +1864,19 @@ class FittingWindow(wx.Frame):
 
         # Validate and set background method from combobox
         selected_method = self.method_combobox.GetValue()
+
+        # Active Shirley and Active Tougaard only support single region
+        if selected_method in ["Active Shirley", "Active Tougaard"]:
+            sheet_name = self.parent.sheet_combobox.GetValue()
+            if sheet_name in self.parent.Data['Core levels']:
+                bg_data = self.parent.Data['Core levels'][sheet_name].get('Background', {})
+                recorded_ranges = bg_data.get('Recorded Ranges', [])
+                if len(recorded_ranges) >= 1:
+                    self.parent.show_popup_message2("Active Shirley",
+                        "Active Shirley only supports a single region. "
+                        "Remove the existing region first to create a new one.")
+                    return
+
         if not selected_method or selected_method == "":
             selected_method = "Smart"  # Default fallback
             self.method_combobox.SetSelection(0)  # Select first item (Smart)
@@ -1727,6 +1913,8 @@ class FittingWindow(wx.Frame):
         if 'Background' in self.parent.Data['Core levels'][sheet_name]:
             self.parent.Data['Core levels'][sheet_name]['Background']['Bkg Low'] = self.parent.bg_min_energy
             self.parent.Data['Core levels'][sheet_name]['Background']['Bkg High'] = self.parent.bg_max_energy
+            # Store the background method in the data structure
+            self.parent.Data['Core levels'][sheet_name]['Background']['Method'] = selected_method
 
         # Parse and save cross-section values when creating region
         self.parse_cross_section(self.cross_section.GetValue())
@@ -1936,6 +2124,14 @@ class FittingWindow(wx.Frame):
                      "background is set equal to the data.",
             "Shirley": "Iterative background calculation. Reliable for increasing background when "
                        "the data contains symmetrical peak. the number of iteration is set to 100",
+            "Active Shirley": "Dynamic/Active Shirley background (Herrera-Gomez method). The background "
+                              "is recalculated from the fitted peaks after each iteration. Initial "
+                              "background is a flat offset at the low BE endpoint. Use 'Fit N# Times' "
+                              "to iterate - background converges with peaks for better accuracy.",
+            "Active Tougaard": "Dynamic/Active Tougaard background. The background is recalculated "
+                               "from the fitted peaks after each iteration using the 4-PIESCS loss "
+                               "function. Initial background is a flat offset. Use 'Fit N# Times' "
+                               "to iterate - background converges with peaks. Uses C=1643, D=1.",
             "Linear": "Simple linear background. Usually used on negative background",
             "U4-Tougaard": "U4 Tougaard background for Advanced users. B, C, D and T0 can be varied.",
             "U2-Tougaard": "2-parameter Tougaard background (auto B, user C, D=0, T0=0)",
@@ -2221,6 +2417,72 @@ class FittingWindow(wx.Frame):
                             current_background = BackgroundCalculations.calculate_adaptive_linear_background(
                                 x_values, y_values, (min_range, max_range), current_background,
                                 float(f"{offset_h:.2f}"), float(f"{offset_l:.2f}"))
+                        elif background_method == "Active Shirley":
+                            # Check if we have stored k and const from previous fitting
+                            stored_k = core_level_data['Background'].get('Active_Shirley_k', None)
+                            stored_const = core_level_data['Background'].get('Active_Shirley_const', None)
+
+                            if stored_k is not None and stored_const is not None:
+                                # Use stored values to recalculate background
+                                mask = (x_values >= min_range) & (x_values <= max_range)
+                                x_filtered = x_values[mask]
+                                y_filtered = y_values[mask]
+
+                                if len(x_filtered) > 0:
+                                    dx = np.abs(np.mean(np.diff(x_filtered))) if len(x_filtered) > 1 else 1
+                                    y_above_const = np.maximum(y_filtered - stored_const, 0)
+
+                                    cumulative_integral = np.zeros_like(y_above_const)
+                                    if x_filtered[0] > x_filtered[-1]:  # BE scale
+                                        for idx in range(len(x_filtered) - 2, -1, -1):
+                                            cumulative_integral[idx] = cumulative_integral[idx + 1] + y_above_const[idx + 1] * dx
+                                    else:
+                                        for idx in range(1, len(x_filtered)):
+                                            cumulative_integral[idx] = cumulative_integral[idx - 1] + y_above_const[idx - 1] * dx
+
+                                    new_bg = stored_const + stored_k * cumulative_integral
+                                    current_background[mask] = new_bg
+                            else:
+                                # No stored values, use initial flat background
+                                current_background = BackgroundCalculations.calculate_adaptive_active_shirley_background(
+                                    x_values, y_values, (min_range, max_range), current_background,
+                                    float(f"{offset_h:.2f}"), float(f"{offset_l:.2f}"))
+                        elif background_method == "Active Tougaard":
+                            stored_B = core_level_data['Background'].get('Active_Tougaard_B', None)
+
+                            if stored_B is not None:
+                                mask = (x_values >= min_range) & (x_values <= max_range)
+                                x_filtered = x_values[mask]
+                                y_filtered = y_values[mask]
+
+                                C = float(core_level_data['Background'].get('Tougaard_C', 1643))
+                                averaging_points = 5
+
+                                if len(x_filtered) > 0:
+                                    from libraries.Peak_Functions import BackgroundCalculations as BC
+                                    baseline = BC.calculate_endpoint_average(
+                                        x_filtered, y_filtered, x_filtered[-1], averaging_points) + offset_l
+
+                                    y_shifted = y_filtered - baseline
+                                    dx = np.abs(np.mean(np.diff(x_filtered)))
+                                    n = len(x_filtered)
+                                    bg = np.zeros(n, dtype=float)
+
+                                    for i in range(n):
+                                        E_prime_minus_E = x_filtered[:i] - x_filtered[i] if x_filtered[0] > x_filtered[-1] else x_filtered[i + 1:] - x_filtered[i]
+                                        E_prime_minus_E = np.abs(E_prime_minus_E)
+                                        if len(E_prime_minus_E) > 0:
+                                            K = stored_B * E_prime_minus_E / ((C + E_prime_minus_E ** 2) ** 2)
+                                            if x_filtered[0] > x_filtered[-1]:
+                                                bg[i] = np.trapz(K * y_shifted[:i], dx=dx) if i > 0 else 0
+                                            else:
+                                                bg[i] = np.trapz(K * y_shifted[i + 1:], dx=dx) if i < n - 1 else 0
+
+                                    current_background[mask] = bg + baseline
+                            else:
+                                current_background = BackgroundCalculations.calculate_adaptive_active_tougaard_background(
+                                    x_values, y_values, (min_range, max_range), current_background,
+                                    float(f"{offset_h:.2f}"), float(f"{offset_l:.2f}"))
                         elif background_method == "Arctan-XAS":
                             current_background = BackgroundCalculations.calculate_adaptive_arctan_background(
                                 x_values, y_values, (min_range, max_range), current_background,
