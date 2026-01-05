@@ -951,6 +951,13 @@ class FittingWindow(wx.Frame):
 
     def on_bkg_method_change(self, event):
         new_method = self.method_combobox.GetValue()
+
+        # Prevent selection of separator items
+        separators = ["Active Background------", "Other Techniques-------"]
+        if new_method  in separators:
+            self.method_combobox.SetValue("Smart")
+            new_method = "Smart"
+
         self.parent.set_background_method(new_method)
         self.update_background_info_button()
         self.update_tougaard_controls_visibility(new_method)
