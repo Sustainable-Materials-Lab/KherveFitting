@@ -3427,21 +3427,22 @@ class PlotManager:
             )
             label = 'Background (ALS-Raman)'
         elif method == "Active Shirley":
-            # Check if we have stored k and const from previous fitting
+            # Check if we have stored k and base const from previous fitting
             stored_k = window.Data['Core levels'][sheet_name]['Background'].get('Active_Shirley_k', None)
-            stored_const = window.Data['Core levels'][sheet_name]['Background'].get('Active_Shirley_const', None)
+            stored_const_base = window.Data['Core levels'][sheet_name]['Background'].get('Active_Shirley_const_base', None)
 
-            if stored_k is not None and stored_const is not None:
-                # Use stored values to recalculate background
+            if stored_k is not None and stored_const_base is not None:
+                # Use stored base const and apply current offset_l
+                new_const = stored_const_base + offset_l
                 dx = np.abs(np.mean(np.diff(x_values_filtered))) if len(x_values_filtered) > 1 else 1
-                y_above_const = np.maximum(y_values_filtered - stored_const, 0)
+                y_above_const = np.maximum(y_values_filtered - new_const, 0)
 
                 # Cumulative integral from low BE toward high BE
                 cumulative_integral = np.cumsum(y_above_const[::-1])[::-1] * dx
                 cumulative_integral = np.roll(cumulative_integral, -1)
                 cumulative_integral[-1] = 0
 
-                background_filtered = stored_const + stored_k * cumulative_integral
+                background_filtered = new_const + stored_k * cumulative_integral
             else:
                 # No stored values, use initial flat background
                 background_filtered = BackgroundCalculations.calculate_active_shirley_background(
@@ -3454,9 +3455,10 @@ class PlotManager:
             if stored_B is not None:
                 C = float(window.Data['Core levels'][sheet_name]['Background'].get('Tougaard_C', 1643))
 
-                # Get baseline at low BE
-                baseline = BackgroundCalculations.calculate_endpoint_average(
-                    x_values_filtered, y_values_filtered, x_values_filtered[-1], averaging_points) + offset_l
+                # Get base baseline at low BE (without offset) and apply current offset_l
+                base_baseline = BackgroundCalculations.calculate_endpoint_average(
+                    x_values_filtered, y_values_filtered, x_values_filtered[-1], averaging_points)
+                baseline = base_baseline + offset_l
 
                 y_shifted = np.maximum(y_values_filtered - baseline, 0)
                 dx = np.abs(np.mean(np.diff(x_values_filtered)))

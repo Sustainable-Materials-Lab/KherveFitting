@@ -1284,6 +1284,8 @@ class FittingWindow(wx.Frame):
             core_level_data['Background']['Bkg Y'] = current_background.tolist()
             core_level_data['Background']['Active_Shirley_k'] = float(f"{k:.6f}")
             core_level_data['Background']['Active_Shirley_const'] = float(f"{const:.2f}")
+            # Store base const without offset for later offset adjustments
+            core_level_data['Background']['Active_Shirley_const_base'] = float(f"{const - offset_l:.2f}")
 
             self.parent.background = current_background
             # print(f"Active Shirley updated: k={k:.6f}, const={const:.2f}")
@@ -1351,6 +1353,8 @@ class FittingWindow(wx.Frame):
 
             core_level_data['Background']['Bkg Y'] = current_background.tolist()
             core_level_data['Background']['Active_Tougaard_B'] = float(f"{B:.2f}")
+            # Store the offset used during fitting for later adjustment
+            core_level_data['Background']['Active_Tougaard_offset_l'] = float(f"{offset_l:.2f}")
 
             self.parent.background = current_background
             print(f"Active Tougaard updated: B={B:.2f}, C={C:.2f}")

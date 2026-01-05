@@ -1175,17 +1175,17 @@ class MouseEventHandler:
                 elif method == "Active Shirley":
                     # Check if we have stored k and const from previous fitting
                     stored_k = self.window.Data['Core levels'][sheet_name]['Background'].get('Active_Shirley_k', None)
-                    stored_const = self.window.Data['Core levels'][sheet_name]['Background'].get('Active_Shirley_const', None)
+                    stored_const_base = self.window.Data['Core levels'][sheet_name]['Background'].get('Active_Shirley_const_base', None)
 
-                    if stored_k is not None and stored_const is not None:
-                        # Use stored values to recalculate background with new offsets
+                    if stored_k is not None and stored_const_base is not None:
+                        # Use stored base const and apply current offset_l
                         mask = (x_values >= min_range) & (x_values <= max_range)
                         x_filtered = x_values[mask]
                         y_filtered = y_values[mask]
 
                         if len(x_filtered) > 0:
-                            # Recalculate const with new offset_l
-                            new_const = stored_const + offset_l
+                            # Apply current offset_l to base const
+                            new_const = stored_const_base + offset_l
                             dx = np.abs(np.mean(np.diff(x_filtered))) if len(x_filtered) > 1 else 1
                             y_above_const = np.maximum(y_filtered - new_const, 0)
 
@@ -1196,12 +1196,16 @@ class MouseEventHandler:
 
                             new_bg = new_const + stored_k * cumulative_integral
                             current_background[mask] = new_bg
+
+                            # Update the stored const to reflect current offset
+                            self.window.Data['Core levels'][sheet_name]['Background']['Active_Shirley_const'] = float(f"{new_const:.2f}")
                     else:
                         # No stored values, use initial flat background
                         current_background = BackgroundCalculations.calculate_adaptive_active_shirley_background(
                             x_values, y_values, (min_range, max_range), current_background, offset_h, offset_l)
                 elif method == "Active Tougaard":
                     stored_B = self.window.Data['Core levels'][sheet_name]['Background'].get('Active_Tougaard_B', None)
+                    original_offset_l = self.window.Data['Core levels'][sheet_name]['Background'].get('Active_Tougaard_offset_l', 0)
 
                     if stored_B is not None:
                         mask = (x_values >= min_range) & (x_values <= max_range)
@@ -1212,9 +1216,12 @@ class MouseEventHandler:
                         averaging_points = getattr(self.window, 'averaging_points', 5)
 
                         if len(x_filtered) > 0:
-                            # Recalculate baseline with new offset_l
-                            baseline = BackgroundCalculations.calculate_endpoint_average(
-                                x_filtered, y_filtered, x_filtered[-1], averaging_points) + offset_l
+                            # Calculate base baseline (without any offset)
+                            base_baseline = BackgroundCalculations.calculate_endpoint_average(
+                                x_filtered, y_filtered, x_filtered[-1], averaging_points)
+
+                            # Apply current offset_l
+                            baseline = base_baseline + offset_l
 
                             y_shifted = np.maximum(y_filtered - baseline, 0)
                             dx = np.abs(np.mean(np.diff(x_filtered)))
