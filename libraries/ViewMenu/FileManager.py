@@ -69,23 +69,33 @@ class FileManagerWindow(wx.Frame):
         if not detect_dark_mode():
             self.panel.SetBackgroundColour(wx.Colour(160, 205, 188))
 
-        main_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        main_sizer = wx.BoxSizer(wx.VERTICAL)
 
-        # Create right panel with content
-        self.right_panel = wx.Panel(self.panel)
-        right_sizer = wx.BoxSizer(wx.VERTICAL)
-
-        # Create toolbar
-        self.toolbar = wx.ToolBar(self.right_panel, style=wx.TB_HORIZONTAL | wx.TB_FLAT | wx.TB_NODIVIDER)
+        # Create horizontal toolbar in main sizer
+        self.toolbar = wx.ToolBar(self.panel, style=wx.TB_HORIZONTAL | wx.TB_FLAT | wx.TB_NODIVIDER)
         self.toolbar.SetToolBitmapSize(wx.Size(25, 25))
 
         if not detect_dark_mode():
             self.toolbar.SetBackgroundColour(wx.Colour(180, 225, 208))
 
-
         self.create_toolbar()
         self.toolbar.Realize()
-        right_sizer.Add(self.toolbar, 0, wx.EXPAND)
+        main_sizer.Add(self.toolbar, 0, wx.EXPAND)
+
+        # Create right panel with content
+        self.right_panel = wx.Panel(self.panel)
+        right_sizer = wx.BoxSizer(wx.HORIZONTAL)
+
+        # Create vertical toolbar
+        self.v_toolbar = wx.ToolBar(self.right_panel, style=wx.TB_VERTICAL | wx.TB_FLAT | wx.TB_NODIVIDER)
+        self.v_toolbar.SetToolBitmapSize(wx.Size(25, 25))
+
+        if not detect_dark_mode():
+            self.v_toolbar.SetBackgroundColour(wx.Colour(180, 225, 208))
+
+        self.create_vertical_toolbar()
+        self.v_toolbar.Realize()
+        right_sizer.Add(self.v_toolbar, 0, wx.EXPAND)
 
         # Create grid
         self.grid = wx.grid.Grid(self.right_panel)
@@ -93,9 +103,9 @@ class FileManagerWindow(wx.Frame):
         self.init_grid()
 
         if not detect_dark_mode():
-            self.grid.SetLabelBackgroundColour(wx.Colour(180, 225, 208))  # Pink for row/column headers
+            self.grid.SetLabelBackgroundColour(wx.Colour(180, 225, 208))
 
-        right_sizer.Add(self.grid, 1, wx.EXPAND | wx.ALL, 5)
+        right_sizer.Add(self.grid, 1, wx.EXPAND | wx.ALL, 0)
 
         self.right_panel.SetSizer(right_sizer)
 
@@ -165,53 +175,43 @@ class FileManagerWindow(wx.Frame):
         event.Skip()
 
     def create_vertical_toolbar(self):
-        """Create vertical toolbar with buttons for core level management"""
-        # Get icon path
+        """Create vertical toolbar with smooth, x1000, and SuM buttons"""
         icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Icons")
-        v_toolbar_sizer = self.v_toolbar_panel.GetSizer()
 
-        # Copy button
-        copy_icon = os.path.join(icon_path, "copy-3.png")
-        copy_btn = wx.BitmapButton(self.v_toolbar_panel, wx.ID_ANY,
-                                   wx.Bitmap(copy_icon) if os.path.exists(copy_icon) else
-                                   wx.ArtProvider.GetBitmap(wx.ART_COPY, wx.ART_BUTTON))
-        copy_btn.SetToolTip("Copy Core Level")
-        v_toolbar_sizer.Add(copy_btn, 0, wx.ALL, 2)
-        self.Bind(wx.EVT_BUTTON, self.on_copy, copy_btn)
+        # Smooth button
+        smooth_icon = os.path.join(icon_path, "Smooth-3.png")
+        if os.path.exists(smooth_icon):
+            smooth_bmp = wx.Bitmap(smooth_icon)
+        else:
+            smooth_bmp = wx.ArtProvider.GetBitmap(wx.ART_INFORMATION, wx.ART_TOOLBAR)
+        smooth_tool = self.v_toolbar.AddTool(wx.ID_ANY, "Smooth Core Level", smooth_bmp,
+                                             "Apply Gaussian smoothing (width=1)")
+        self.Bind(wx.EVT_TOOL, self.on_smooth_default, smooth_tool)
 
-        # Paste button
-        paste_btn = wx.BitmapButton(self.v_toolbar_panel, wx.ID_ANY,
-                                    wx.ArtProvider.GetBitmap(wx.ART_PASTE, wx.ART_BUTTON))
-        paste_btn.SetToolTip("Paste Core Level")
-        v_toolbar_sizer.Add(paste_btn, 0, wx.ALL, 2)
-        self.Bind(wx.EVT_BUTTON, self.on_paste, paste_btn)
+        # x1000 button
+        x1000_icon = os.path.join(icon_path, "Multi-3.png")
+        if os.path.exists(x1000_icon):
+            x1000_bmp = wx.Bitmap(x1000_icon)
+        else:
+            x1000_bmp = wx.ArtProvider.GetBitmap(wx.ART_GO_UP, wx.ART_TOOLBAR)
+        x1000_tool = self.v_toolbar.AddTool(wx.ID_ANY, "Multiply by 1000", x1000_bmp,
+                                            "Multiply selected core level by 1000")
+        self.Bind(wx.EVT_TOOL, self.on_multiply_1000, x1000_tool)
 
-        # Rename button
-        rename_icon = os.path.join(icon_path, "rename-3.png")
-        rename_btn = wx.BitmapButton(self.v_toolbar_panel, wx.ID_ANY,
-                                     wx.Bitmap(rename_icon) if os.path.exists(rename_icon) else
-                                     wx.ArtProvider.GetBitmap(wx.ART_INFORMATION, wx.ART_BUTTON))
-        rename_btn.SetToolTip("Rename Core Level")
-        v_toolbar_sizer.Add(rename_btn, 0, wx.ALL, 2)
-        self.Bind(wx.EVT_BUTTON, self.on_rename, rename_btn)
-
-        # Delete button
-        delete_icon = os.path.join(icon_path, "delete-3.png")
-        delete_btn = wx.BitmapButton(self.v_toolbar_panel, wx.ID_ANY,
-                                     wx.Bitmap(delete_icon) if os.path.exists(delete_icon) else
-                                     wx.ArtProvider.GetBitmap(wx.ART_DELETE, wx.ART_BUTTON))
-        delete_btn.SetToolTip("Delete Core Level")
-        v_toolbar_sizer.Add(delete_btn, 0, wx.ALL, 2)
-        self.Bind(wx.EVT_BUTTON, self.on_delete, delete_btn)
+        # Subtract button
+        subtract_icon = os.path.join(icon_path, "Sub-3.png")
+        if os.path.exists(subtract_icon):
+            subtract_bmp = wx.Bitmap(subtract_icon)
+        else:
+            subtract_bmp = wx.ArtProvider.GetBitmap(wx.ART_MINUS, wx.ART_TOOLBAR)
+        subtract_tool = self.v_toolbar.AddTool(wx.ID_ANY, "Subtract Selected", subtract_bmp, "Subtract selected core levels")
+        self.Bind(wx.EVT_TOOL, self.on_subtract_selected, subtract_tool)
 
         # Sum button
-        sum_icon = os.path.join(icon_path, "SUM-25.png")
-        sum_btn = wx.BitmapButton(self.v_toolbar_panel, wx.ID_ANY,
-                                  wx.Bitmap(sum_icon) if os.path.exists(sum_icon) else
-                                  wx.ArtProvider.GetBitmap(wx.ART_NEW, wx.ART_BUTTON))
-        sum_btn.SetToolTip("Sum Selected")
-        v_toolbar_sizer.Add(sum_btn, 0, wx.ALL, 2)
-        self.Bind(wx.EVT_BUTTON, self.on_sum_selected, sum_btn)
+        sum_icon = os.path.join(icon_path, "SuM-3.png")
+        sum_bmp = wx.Bitmap(sum_icon)
+        sum_tool = self.v_toolbar.AddTool(wx.ID_ANY, "Sum Selected", sum_bmp, "Sum selected core levels")
+        self.Bind(wx.EVT_TOOL, self.on_sum_selected, sum_tool)
 
 
     def create_toolbar(self):
@@ -279,40 +279,32 @@ class FileManagerWindow(wx.Frame):
         delete_tool = self.toolbar.AddTool(wx.ID_ANY, "Delete Core Level", delete_bmp, "Delete selected core level")
         self.Bind(wx.EVT_TOOL, self.on_delete, delete_tool)
 
-        # Smooth button
-        smooth_icon = os.path.join(icon_path, "Smooth-3.png")
-        if os.path.exists(smooth_icon):
-            smooth_bmp = wx.Bitmap(smooth_icon)
-        else:
-            smooth_bmp = wx.ArtProvider.GetBitmap(wx.ART_INFORMATION, wx.ART_TOOLBAR)
-        smooth_tool = self.toolbar.AddTool(wx.ID_ANY, "Smooth Core Level", smooth_bmp,
-                                           "Apply Gaussian smoothing (width=1)")
-        self.Bind(wx.EVT_TOOL, self.on_smooth_default, smooth_tool)
-
-        # x1000 button (multiply by 1000) - add after sum button
-        x1000_icon = os.path.join(icon_path, "Multi-3.png")
-        if os.path.exists(x1000_icon):
-            x1000_bmp = wx.Bitmap(x1000_icon)
-        else:
-            x1000_bmp = wx.ArtProvider.GetBitmap(wx.ART_GO_UP, wx.ART_TOOLBAR)
-        x1000_tool = self.toolbar.AddTool(wx.ID_ANY, "Multiply by 1000", x1000_bmp,
-                                          "Multiply selected core level by 1000")
-        self.Bind(wx.EVT_TOOL, self.on_multiply_1000, x1000_tool)
-
-        # Subtract button
-        subtract_icon = os.path.join(icon_path, "Sub-3.png")
-        if os.path.exists(subtract_icon):
-            subtract_bmp = wx.Bitmap(subtract_icon)
-        else:
-            subtract_bmp = wx.ArtProvider.GetBitmap(wx.ART_MINUS, wx.ART_TOOLBAR)
-        subtract_tool = self.toolbar.AddTool(wx.ID_ANY, "Subtract Selected", subtract_bmp, "Subtract selected core levels")
-        self.Bind(wx.EVT_TOOL, self.on_subtract_selected, subtract_tool)
-
-        # Sum button
-        sum_icon = os.path.join(icon_path, "SuM-3.png")
-        sum_bmp = wx.Bitmap(sum_icon)
-        sum_tool = self.toolbar.AddTool(wx.ID_ANY, "Sum Selected", sum_bmp, "Sum selected core levels")
-        self.Bind(wx.EVT_TOOL, self.on_sum_selected, sum_tool)
+        # # Smooth button
+        # smooth_icon = os.path.join(icon_path, "Smooth-3.png")
+        # if os.path.exists(smooth_icon):
+        #     smooth_bmp = wx.Bitmap(smooth_icon)
+        # else:
+        #     smooth_bmp = wx.ArtProvider.GetBitmap(wx.ART_INFORMATION, wx.ART_TOOLBAR)
+        # smooth_tool = self.toolbar.AddTool(wx.ID_ANY, "Smooth Core Level", smooth_bmp,
+        #                                    "Apply Gaussian smoothing (width=1)")
+        # self.Bind(wx.EVT_TOOL, self.on_smooth_default, smooth_tool)
+        #
+        # # x1000 button (multiply by 1000) - add after sum button
+        # x1000_icon = os.path.join(icon_path, "Multi-3.png")
+        # if os.path.exists(x1000_icon):
+        #     x1000_bmp = wx.Bitmap(x1000_icon)
+        # else:
+        #     x1000_bmp = wx.ArtProvider.GetBitmap(wx.ART_GO_UP, wx.ART_TOOLBAR)
+        # x1000_tool = self.toolbar.AddTool(wx.ID_ANY, "Multiply by 1000", x1000_bmp,
+        #                                   "Multiply selected core level by 1000")
+        # self.Bind(wx.EVT_TOOL, self.on_multiply_1000, x1000_tool)
+        #
+        #
+        # # Sum button
+        # sum_icon = os.path.join(icon_path, "SuM-3.png")
+        # sum_bmp = wx.Bitmap(sum_icon)
+        # sum_tool = self.toolbar.AddTool(wx.ID_ANY, "Sum Selected", sum_bmp, "Sum selected core levels")
+        # self.Bind(wx.EVT_TOOL, self.on_sum_selected, sum_tool)
 
 
         # Plot button
