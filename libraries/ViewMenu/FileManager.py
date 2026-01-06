@@ -50,7 +50,7 @@ class FileManagerWindow(wx.Frame):
                          style=wx.DEFAULT_FRAME_STYLE | wx.STAY_ON_TOP, *args, **kwargs)
 
         # Add this line to set a minimum window size
-        self.SetMinSize((655, 50))  # Ensure toolbar icons remain visible
+        self.SetMinSize((600, 50))  # Ensure toolbar icons remain visible
 
         self.offset_multiplier = 1
         self.last_offset_sheets = []
@@ -212,6 +212,16 @@ class FileManagerWindow(wx.Frame):
         sum_bmp = wx.Bitmap(sum_icon)
         sum_tool = self.v_toolbar.AddTool(wx.ID_ANY, "Sum Selected", sum_bmp, "Sum selected core levels")
         self.Bind(wx.EVT_TOOL, self.on_sum_selected, sum_tool)
+
+        # Create Map button
+        map_icon = os.path.join(icon_path, "heatmap-3.png")
+        if os.path.exists(map_icon):
+            map_bmp = wx.Bitmap(map_icon)
+        else:
+            map_bmp = wx.ArtProvider.GetBitmap(wx.ART_FIND, wx.ART_TOOLBAR)
+        map_tool = self.v_toolbar.AddTool(wx.ID_ANY, "Create Map", map_bmp,
+                                         "Create XPS~Map from selected core levels")
+        self.Bind(wx.EVT_TOOL, self.on_create_map_from_selection, map_tool)
 
 
     def create_toolbar(self):
@@ -6757,6 +6767,205 @@ class FileManagerWindow(wx.Frame):
         """Legacy function - kept for compatibility"""
         self.smooth_heatmap(1.0)
 
+    def on_create_map_from_selection(self, event):
+        """Create XPS~Map from selected core levels in the grid."""
+        # Get all selected cells and extract unique sheet names
+        sheet_names = []
+        selected_cells = self.grid.GetSelectedCells()
+
+        # Also check for selected blocks
+        top_left = self.grid.GetSelectionBlockTopLeft()
+        bottom_right = self.grid.GetSelectionBlockBottomRight()
+
+        # Collect from individual cells
+        for cell in selected_cells:
+            row, col = cell
+            sheet_name = self.grid.GetCellValue(row, col)
+            if sheet_name and sheet_name in self.parent.Data['Core levels']:
+                if sheet_name not in sheet_names:
+                    sheet_names.append(sheet_name)
+
+        # Collect from blocks
+        for i in range(len(top_left)):
+            for row in range(top_left[i][0], bottom_right[i][0] + 1):
+                for col in range(top_left[i][1], bottom_right[i][1] + 1):
+                    sheet_name = self.grid.GetCellValue(row, col)
+                    if sheet_name and sheet_name in self.parent.Data['Core levels']:
+                        if sheet_name not in sheet_names:
+                            sheet_names.append(sheet_name)
+
+        if len(sheet_names) < 2:
+            wx.MessageBox("Please select at least 2 core levels to create a map.",
+                          "Selection Error", wx.OK | wx.ICON_WARNING)
+            return
+
+        # Check that all sheets have the same core level type
+        core_level_types = set()
+        for sheet_name in sheet_names:
+            # Extract base core level name (remove numbers at end)
+            base_name = re.sub(r'\d+$', '', sheet_name)
+            core_level_types.add(base_name)
+
+        if len(core_level_types) > 1:
+            wx.MessageBox(f"All selected core levels must be of the same type.\nFound: {', '.join(core_level_types)}",
+                          "Type Mismatch", wx.OK | wx.ICON_ERROR)
+            return
+
+        # Get the base name (core level type)
+        base_name = core_level_types.pop()
+
+        # Create XPS~Map sheet name: XPS~Map, XPS~Map1, XPS~Map2, etc.
+        existing_maps = [name for name in self.parent.Data['Core levels'].keys()
+                         if name.startswith('XPS~Map')]
+        if len(existing_maps) == 0:
+            map_sheet_name = "XPS~Map"
+        else:
+            counter = 1
+            map_sheet_name = f"XPS~Map{counter}"
+            while map_sheet_name in self.parent.Data['Core levels']:
+                counter += 1
+                map_sheet_name = f"XPS~Map{counter}"
+
+        # Get reference data from first sheet
+        first_sheet_name = sheet_names[0]
+        first_sheet_data = self.parent.Data['Core levels'][first_sheet_name]
+
+        # Check that all sheets have the same BE values
+        reference_be = np.array([float(x) for x in first_sheet_data['B.E.']])
+
+        for sheet_name in sheet_names[1:]:
+            sheet_data = self.parent.Data['Core levels'][sheet_name]
+            be_values = np.array([float(x) for x in sheet_data['B.E.']])
+            if not np.allclose(be_values, reference_be, atol=0.01):
+                wx.MessageBox(f"All core levels must have the same BE values.\n{sheet_name} has different BE values.",
+                              "BE Mismatch", wx.OK | wx.ICON_ERROR)
+                return
+
+        num_sweeps = len(sheet_names)
+
+        # Create map data structure matching Scienta_Import format
+        map_data = {
+            'Name': map_sheet_name,
+            'B.E.': [round(float(val), 2) for val in reference_be],
+            '_Map_type': 'combined',
+            '_num_sweeps': num_sweeps,
+            '_core_level': base_name,
+        }
+
+        # Add Y columns for each sweep (Y1, Y2, Y3, ...)
+        for idx, sheet_name in enumerate(sheet_names, start=1):
+            sheet_data = self.parent.Data['Core levels'][sheet_name]
+            raw_data = sheet_data.get('Raw Data', sheet_data.get('Corrected Data', []))
+            map_data[f'Y{idx}'] = [round(float(val), 2) for val in raw_data]
+
+        # Build experimental info matching Scienta_Import format
+        first_exp_info = first_sheet_data.get('ExperimentalInfo', {})
+        map_data['ExperimentalInfo'] = {
+            'Sample ID': first_exp_info.get('Sample ID', first_exp_info.get('Sample', '')),
+            'Spectrum Name': first_exp_info.get('Spectrum Name', ''),
+            'Region Name': base_name,
+            'Core Level': base_name,
+            'Map Sheet Name': map_sheet_name,
+            'Instrument': first_exp_info.get('Instrument', ''),
+            'Location': first_exp_info.get('Location', ''),
+            'User': first_exp_info.get('User', ''),
+            'Date': first_exp_info.get('Date', ''),
+            'Time': first_exp_info.get('Time', ''),
+            'Technique': 'XPS Map',
+            'Excitation Energy': first_exp_info.get('Excitation Energy', ''),
+            'Pass Energy': first_exp_info.get('Pass Energy', ''),
+            'Number of Sweeps': str(num_sweeps),
+            'Number of Points': str(len(reference_be)),
+            'BE Start': f"{reference_be[0]:.2f}",
+            'BE End': f"{reference_be[-1]:.2f}",
+            'Source Sheets': ', '.join(sheet_names),
+        }
+
+        # Add background structure
+        map_data['Background'] = {
+            'Bkg Type': '',
+            'Bkg Low': round(float(min(reference_be)), 2),
+            'Bkg High': round(float(max(reference_be)), 2),
+            'Bkg Offset Low': 0,
+            'Bkg Offset High': 0
+        }
+
+        # Add to window.Data
+        self.parent.Data['Core levels'][map_sheet_name] = map_data
+        self.parent.Data['Number of Core levels'] = len(self.parent.Data['Core levels'])
+
+        # Add sheet to Excel
+        self._add_map_sheet_to_excel(map_sheet_name, map_data, sheet_names)
+
+        # Update combobox if not already present
+        if map_sheet_name not in [self.parent.sheet_combobox.GetString(i)
+                                  for i in range(self.parent.sheet_combobox.GetCount())]:
+            self.parent.sheet_combobox.Append(map_sheet_name)
+
+        # Refresh grid
+        self.populate_grid()
+
+        # Save state
+        from libraries.FileMenu.Save import save_state
+        save_state(self.parent)
+
+        wx.MessageBox(f"Created map: {map_sheet_name}\nCore Level: {base_name}\nSweeps: {num_sweeps}",
+                      "XPS~Map Created", wx.OK | wx.ICON_INFORMATION)
+
+    def _add_map_sheet_to_excel(self, map_sheet_name, map_data, source_sheets):
+        """Add map sheet to Excel file matching Scienta_Import format."""
+        import openpyxl
+
+        excel_path = self.parent.Data.get('FilePath', '')
+        if not excel_path or not os.path.exists(excel_path):
+            return
+
+        try:
+            wb = openpyxl.load_workbook(excel_path)
+
+            # Remove existing sheet if it exists
+            if map_sheet_name in wb.sheetnames:
+                del wb[map_sheet_name]
+
+            ws = wb.create_sheet(map_sheet_name)
+
+            num_sweeps = map_data['_num_sweeps']
+            be_values = [float(x) for x in map_data['B.E.']]
+
+            # Write headers: BE, Y1, Y2, Y3, ...
+            ws.cell(row=1, column=1, value='BE')
+            for sweep_idx in range(num_sweeps):
+                ws.cell(row=1, column=sweep_idx + 2, value=f'Y{sweep_idx + 1}')
+
+            # Write data rows
+            for i, be_val in enumerate(be_values):
+                ws.cell(row=i + 2, column=1, value=round(be_val, 2))
+                for sweep_idx in range(num_sweeps):
+                    y_data = map_data[f'Y{sweep_idx + 1}']
+                    ws.cell(row=i + 2, column=sweep_idx + 2, value=round(float(y_data[i]), 2))
+
+            # Write experimental info - position at column after Y data + 10
+            exp_col = num_sweeps + 10
+            ws.cell(row=1, column=exp_col, value="Experimental Description")
+
+            if 'ExperimentalInfo' in map_data:
+                row = 2
+                for key, value in map_data['ExperimentalInfo'].items():
+                    ws.cell(row=row, column=exp_col, value=key)
+                    ws.cell(row=row, column=exp_col + 1, value=str(value))
+                    row += 1
+
+            # Set column widths for experimental info
+            ws.column_dimensions[openpyxl.utils.get_column_letter(exp_col)].width = 25
+            ws.column_dimensions[openpyxl.utils.get_column_letter(exp_col + 1)].width = 40
+
+            wb.save(excel_path)
+            wb.close()
+        except Exception as e:
+            print(f"Error adding map sheet to Excel: {e}")
+            import traceback
+            traceback.print_exc()
+
 
 class CoreLevelSelectionDialog(wx.Dialog):
     """Dialog for selecting which core levels to paste peak table to"""
@@ -7997,4 +8206,6 @@ class FileManagerDropTarget(wx.FileDropTarget):
 
         # Copy data validation
         target_sheet.data_validations = copy(source_sheet.data_validations)
+        
+
 

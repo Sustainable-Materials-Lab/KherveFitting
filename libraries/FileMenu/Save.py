@@ -657,7 +657,12 @@ def ensure_sliceable(data, length):
         return [data] * length
 
 def save_to_excel(window, data, file_path, sheet_name, update_console=None):
-    # Add this function near the beginning of Save.py file
+    try:
+        import openpyxl
+    except ImportError:
+        wx.MessageBox("openpyxl not installed. Cannot save Excel files.",
+                      "Error", wx.OK | wx.ICON_ERROR)
+        return
     def safe_get(obj, key, default=None):
         """Safely access dictionary keys or list indices without causing errors."""
         if isinstance(obj, dict) and key in obj:
