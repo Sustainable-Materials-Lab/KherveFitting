@@ -65,7 +65,7 @@ class ThickogramWindow(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_about, about_item)
 
 
-        panel = wx.Panel(self)
+        panel = wx.Panel(self, style=wx.BORDER_RAISED)
         main_sizer = wx.BoxSizer(wx.HORIZONTAL)
 
         # Left panel for controls
@@ -92,13 +92,6 @@ class ThickogramWindow(wx.Frame):
         calc_btn.Bind(wx.EVT_BUTTON, self.on_calculate)
         left_sizer.Add(calc_btn, 0, wx.ALL, 3)  # Removed wx.EXPAND
 
-        # # Result label
-        # self.result_label = wx.StaticText(left_panel, label="", size=(160, 30))
-        # result_font = wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
-        # self.result_label.SetFont(result_font)
-        # self.result_label.SetForegroundColour(wx.Colour(255, 0, 0))
-        # left_sizer.Add(self.result_label, 0, wx.ALL | wx.EXPAND, 3)
-
         left_panel.SetSizer(left_sizer)
 
         # Right panel for plot
@@ -114,7 +107,7 @@ class ThickogramWindow(wx.Frame):
 
         # Add panels to main sizer
         main_sizer.Add(left_panel, 0, wx.EXPAND | wx.ALL, 2)
-        main_sizer.Add(right_panel, 1, wx.EXPAND | wx.ALL, 2)
+        main_sizer.Add(right_panel, 1, wx.EXPAND | wx.ALL, 0)
 
         panel.SetSizer(main_sizer)
 

@@ -4901,11 +4901,6 @@ class TougaardFitWindow(wx.Frame):
         control_panel = wx.Panel(self.panel)
         control_sizer = wx.BoxSizer(wx.VERTICAL)
 
-        # # Number of Tougaard backgrounds control
-        # num_box = wx.StaticBox(control_panel, label="Number of Tougaard Backgrounds")
-        # num_sizer = wx.StaticBoxSizer(num_box, wx.HORIZONTAL)
-        # self.num_tougaard = wx.SpinCtrl(control_panel, min=1, max=10, initial=1)
-        # num_sizer.Add(self.num_tougaard, 1, wx.ALL, 5)
 
         # Background start control
         bg_box = wx.StaticBox(control_panel, label="Background Start")
@@ -5388,6 +5383,8 @@ class TougaardFitWindow(wx.Frame):
             moveable = wx.CheckBox(range_panel, label="Moveable")
             if i < len(previous_values):
                 moveable.SetValue(previous_values[i]['moveable'])
+            else:
+                moveable.SetValue(True)
             moveable.Bind(wx.EVT_CHECKBOX, self.on_moveable_change)
 
             checkbox_sizer.Add(use_range, 0, wx.ALL, 2)

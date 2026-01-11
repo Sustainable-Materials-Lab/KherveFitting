@@ -1110,9 +1110,14 @@ def create_menu(window):
     Dparam_item = tools_menu.Append(wx.NewId(), "D-parameter\tCtrl+D")
     window.Bind(wx.EVT_MENU, window.on_differentiate, Dparam_item)
 
-    # Thickogram
-    thickogram_item = tools_menu.Append(wx.NewId(), "Thickogram Calculator - beta")
+    # Thickogram and Tougaard
+    # thickogram_item = tools_menu.Append(wx.NewId(), "Thickogram Calculator - beta")
+    thickogram_item = tools_menu.Append(wx.NewId(), "Thickness analysis - beta")
     window.Bind(wx.EVT_MENU, lambda event: open_thickogram_window(window), thickogram_item)
+
+    # # Tougaard Quantitative Analysis
+    # tougaard_analysis_item = tools_menu.Append(wx.NewId(), "Tougaard Depth Analysis")
+    # window.Bind(wx.EVT_MENU, lambda event: open_tougaard_analysis_window(window), tougaard_analysis_item)
 
     # Add VBM and Auto ID to Tools menu
     VBM_item = tools_menu.Append(wx.NewId(), "VBM / Fermi / Cut-Off")
@@ -2438,9 +2443,17 @@ def show_plot_limits_window(window):
 
 def open_thickogram_window(parent_window):
     """Open the thickogram calculator window"""
-    from libraries.ToolsMenu.ThickogramWindow import ThickogramWindow
-    thickogram_window = ThickogramWindow(parent_window)
+    # from libraries.ToolsMenu.ThickogramWindow import ThickogramWindow
+    # thickogram_window = ThickogramWindow(parent_window)
+    from libraries.ToolsMenu.ThicknessAnalysisWindow import ThicknessAnalysisWindow
+    thickogram_window = ThicknessAnalysisWindow(parent_window)
     thickogram_window.Show()
+
+def open_tougaard_analysis_window(parent_window):
+    """Open the Tougaard Quantitative XPS Depth Analysis window"""
+    from libraries.ToolsMenu.TougaardAnalysisWindow import TougaardAnalysisWindow
+    tougaard_window = TougaardAnalysisWindow(parent_window)
+    tougaard_window.Show()
 
 
 def toggle_green_vline(frame):
