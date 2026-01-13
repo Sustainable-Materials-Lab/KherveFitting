@@ -1206,12 +1206,20 @@ def check_registration_needed():
 
 
 def check_usage_tracking_needed(times_opened):
-    """Check if usage tracking is needed at specific milestones"""
-    milestones = [10,15,20,25, 30,40, 50,60,70,80,90, 100,150, 200, 250, 300, 400, 500, 600, 700, 800, 900, 1000]
-    print(f"Checking usage tracking for {times_opened} opens")
-    # return times_opened in milestones
-    return False # Do not send usage data for now
-    # return True
+    """Check if usage tracking is needed based on config file setting"""
+    import json
+    import os
+
+    config_file = 'config.json'
+    if os.path.exists(config_file):
+        try:
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+                return config.get('usage_tracking', True)
+        except:
+            return True
+    return True
+
 
 def submit_usage_data(times_opened, location_data, panel_theme="Unknown", grid_layout="Unknown", multiplot_palette="Unknown"):
     """Submit usage tracking data to Google Form"""
@@ -1221,18 +1229,32 @@ def submit_usage_data(times_opened, location_data, panel_theme="Unknown", grid_l
         detailed_location = f"{location_data['country']}, {location_data['region']}"
         detailed_uni = f"{location_data['city']}"
 
-        # Format the usage info with style preferences
-        # usage_info = f"Opened {times_opened:.2f} times | Theme: {panel_theme} | Layout: {grid_layout} | Palette: {multiplot_palette}"
+        from libraries.Update import UpdateChecker
+
+        updater = UpdateChecker()
+        version = updater.current_version
+
+        # Get current instrument from config
+        import json
+        import os
+        current_instrument = "Unknown"
+        if os.path.exists('config.json'):
+            try:
+                with open('config.json', 'r') as f:
+                    config = json.load(f)
+                    current_instrument = config.get('current_instrument', 'Al1486')
+            except:
+                current_instrument = "Al1486"
 
         data = {
-            FORM_FIELDS['First name']: 'KherveFitting',
+            FORM_FIELDS['First name']: f'v{version:.2f}',
             FORM_FIELDS['Surname']: f'Daily: {times_opened:.2f}',
             FORM_FIELDS['Email']: f'Palette: {multiplot_palette}',
             FORM_FIELDS['University/Company']: detailed_uni,
             FORM_FIELDS['Country']: detailed_location,
             FORM_FIELDS['Usage']: f'Theme: {panel_theme}',
             FORM_FIELDS['Supplier Name']: f'Layout: {grid_layout}',
-            FORM_FIELDS['Discovery']: f'Tracking at {current_time}'
+            FORM_FIELDS['Discovery']: f'RSF: {current_instrument}'
         }
 
         response = requests.post(GOOGLE_FORM_URL, data=data)

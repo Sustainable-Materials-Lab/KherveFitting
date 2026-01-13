@@ -14,6 +14,13 @@ from datetime import datetime, timedelta
 GOOGLE_SHEETS_ID = '1mP23kwwg-H1Gx5ppp2YQNv6X1lYhJj2B6_PagQ0yABw'
 GOOGLE_SHEETS_CSV_URL = f'https://docs.google.com/spreadsheets/d/{GOOGLE_SHEETS_ID}/export?format=csv&gid=213903690'
 
+# Compressed monthly usage data - Update this before each release by running compile_monthly_usage.py
+# Format: 'YYYY_MM': {'Country': count, ...}
+MONTHLY_USAGE_DATA = {
+    # Run compile_monthly_usage.py to generate this dictionary
+    # Then copy-paste the output here
+}
+
 
 class UsageStatsWindow(wx.Frame):
     def __init__(self, parent):
@@ -36,25 +43,24 @@ class UsageStatsWindow(wx.Frame):
         left_sizer = wx.BoxSizer(wx.VERTICAL)
 
         time_periods = [
-            ("Since Sept 2025", self.plot_sept_2025),
+            ("Since Sept 2024", self.plot_sept_2024),
             ("Last Year", self.plot_last_year),
             ("Last 6 Months", self.plot_last_6_months),
             ("Last 3 Months", self.plot_last_3_months),
             ("Last 2 Months", self.plot_last_2_months),
             ("Last Month", self.plot_last_month),
+            ("Current Month", self.plot_current_month),
+            ("1 Month Ago", self.plot_1_month_ago),
+            ("2 Months Ago", self.plot_2_months_ago),
+            ("3 Months Ago", self.plot_3_months_ago),
             ("Last 3 Weeks", self.plot_last_3_weeks),
             ("Last 2 Weeks", self.plot_last_2_weeks),
             ("Last Week", self.plot_last_week),
             ("Last 4 Days", self.plot_last_4_days),
             ("Last 3 Days", self.plot_last_3_days),
             ("Last 2 Days", self.plot_last_2_days),
-            ("4 Days Ago", self.plot_4_days_ago),
-            ("3 Days Ago", self.plot_3_days_ago),
-            ("2 Days Ago", self.plot_2_days_ago),
             ("Yesterday", self.plot_yesterday),
             ("Today", self.plot_today),
-            # ("All Usage Data", self.plot_all_usage),
-            # ("Google Form", self.plot_google_form),
         ]
 
         for label, callback in time_periods:
@@ -108,8 +114,65 @@ class UsageStatsWindow(wx.Frame):
     def on_strength_changed(self, event):
         self.geographic_pull_strength = self.strength_spin.GetValue()
 
+    def get_compressed_month_data(self, year, month):
+        """Get compressed monthly data from embedded dictionary"""
+        key = f"{year}_{month:02d}"
+        return MONTHLY_USAGE_DATA.get(key, {})
+
+    def get_compressed_data_for_range(self, start_date, end_date):
+        """Get usage data from compressed monthly dictionary for complete months"""
+        now = datetime.now()
+        current_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        country_usage = {}
+
+        # Use compressed data for any complete months (not the current month)
+        if start_date < current_month_start:
+            # Determine which months to load
+            current_date = start_date.replace(day=1)
+            compressed_end = min(end_date, current_month_start - timedelta(days=1))
+
+            while current_date <= compressed_end:
+                month_data = self.get_compressed_month_data(current_date.year, current_date.month)
+
+                # Add this month's data to country_usage
+                for country, count in month_data.items():
+                    if country in country_usage:
+                        country_usage[country] += count
+                    else:
+                        country_usage[country] = count
+
+                # Move to next month
+                if current_date.month == 12:
+                    current_date = current_date.replace(year=current_date.year + 1, month=1)
+                else:
+                    current_date = current_date.replace(month=current_date.month + 1)
+
+            return country_usage
+
+        return {}
+
     def get_google_form_data(self, start_date=None, end_date=None):
-        """Fetch usage data from Google Form with optional date filtering"""
+        """Fetch usage data from Google Form with optional date filtering
+        Uses compressed monthly data for complete months,
+        fetches live data only for the current incomplete month"""
+
+        country_usage = {}
+
+        # If we have date filtering
+        if start_date and end_date:
+            now = datetime.now()
+            current_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+            # Get compressed data for complete months (any month before current month)
+            if start_date < current_month_start:
+                compressed_data = self.get_compressed_data_for_range(start_date, end_date)
+                country_usage.update(compressed_data)
+
+                # Adjust start_date to only fetch current month data from Google Sheets
+                start_date = max(start_date, current_month_start)
+
+        # Fetch live data from Google Sheets (for recent 2 months or if no date filter)
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -117,12 +180,17 @@ class UsageStatsWindow(wx.Frame):
 
             response = requests.get(GOOGLE_SHEETS_CSV_URL, headers=headers)
             if response.status_code != 200:
+                if country_usage:  # If we have compressed data, return it
+                    countries_list = [[country, count] for country, count in country_usage.items()]
+                    countries_list.sort(key=lambda x: x[1], reverse=True)
+                    return {
+                        'countries': countries_list,
+                        'stats_updated': datetime.now().isoformat()
+                    }
                 return self.get_sample_usage_data()
 
             csv_data = response.content.decode('utf-8')
             reader = csv.DictReader(io.StringIO(csv_data))
-
-            country_usage = {}
 
             for row in reader:
                 # Parse timestamp
@@ -171,6 +239,13 @@ class UsageStatsWindow(wx.Frame):
 
         except Exception as e:
             print(f"Error reading Google Form data: {e}")
+            if country_usage:  # If we have compressed data, return it
+                countries_list = [[country, count] for country, count in country_usage.items()]
+                countries_list.sort(key=lambda x: x[1], reverse=True)
+                return {
+                    'countries': countries_list,
+                    'stats_updated': datetime.now().isoformat()
+                }
             return self.get_sample_usage_data()
 
     def get_date_range(self, period_type):
@@ -217,6 +292,45 @@ class UsageStatsWindow(wx.Frame):
         elif period_type == "last_month":
             start_date = now - timedelta(days=30)
             end_date = now
+        elif period_type == "current_month":
+            start_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            end_date = now
+        elif period_type == "1_month_ago":
+            # Get the first day of last month
+            if now.month == 1:
+                last_month = now.replace(year=now.year - 1, month=12, day=1, hour=0, minute=0, second=0, microsecond=0)
+            else:
+                last_month = now.replace(month=now.month - 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+            # Get the last day of last month (first day of current month - 1 day)
+            current_month_first = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            start_date = last_month
+            end_date = current_month_first - timedelta(seconds=1)
+        elif period_type == "2_months_ago":
+            # Get the month 2 months ago
+            if now.month <= 2:
+                target_month = now.replace(year=now.year - 1, month=12 + now.month - 2, day=1, hour=0, minute=0, second=0, microsecond=0)
+            else:
+                target_month = now.replace(month=now.month - 2, day=1, hour=0, minute=0, second=0, microsecond=0)
+            # Get the last day of that month
+            if target_month.month == 12:
+                next_month = target_month.replace(year=target_month.year + 1, month=1)
+            else:
+                next_month = target_month.replace(month=target_month.month + 1)
+            start_date = target_month
+            end_date = next_month - timedelta(seconds=1)
+        elif period_type == "3_months_ago":
+            # Get the month 3 months ago
+            if now.month <= 3:
+                target_month = now.replace(year=now.year - 1, month=12 + now.month - 3, day=1, hour=0, minute=0, second=0, microsecond=0)
+            else:
+                target_month = now.replace(month=now.month - 3, day=1, hour=0, minute=0, second=0, microsecond=0)
+            # Get the last day of that month
+            if target_month.month == 12:
+                next_month = target_month.replace(year=target_month.year + 1, month=1)
+            else:
+                next_month = target_month.replace(month=target_month.month + 1)
+            start_date = target_month
+            end_date = next_month - timedelta(seconds=1)
         elif period_type == "last_2_months":
             start_date = now - timedelta(days=60)
             end_date = now
@@ -229,8 +343,8 @@ class UsageStatsWindow(wx.Frame):
         elif period_type == "last_year":
             start_date = now - timedelta(days=365)
             end_date = now
-        elif period_type == "since_sept_2025":
-            start_date = datetime(2025, 9, 1)
+        elif period_type == "since_sept_2024":
+            start_date = datetime(2024, 9, 1)
             end_date = now
         else:
             # Default: no date filtering
@@ -608,21 +722,6 @@ class UsageStatsWindow(wx.Frame):
         data = self.get_google_form_data(start_date, end_date)
         self.plot_world_map_bubbles(data)
 
-    def plot_2_days_ago(self, event):
-        start_date, end_date = self.get_date_range("2_days_ago")
-        data = self.get_google_form_data(start_date, end_date)
-        self.plot_world_map_bubbles(data)
-
-    def plot_3_days_ago(self, event):
-        start_date, end_date = self.get_date_range("3_days_ago")
-        data = self.get_google_form_data(start_date, end_date)
-        self.plot_world_map_bubbles(data)
-
-    def plot_4_days_ago(self, event):
-        start_date, end_date = self.get_date_range("4_days_ago")
-        data = self.get_google_form_data(start_date, end_date)
-        self.plot_world_map_bubbles(data)
-
     def plot_last_2_days(self, event):
         start_date, end_date = self.get_date_range("last_2_days")
         data = self.get_google_form_data(start_date, end_date)
@@ -678,8 +777,28 @@ class UsageStatsWindow(wx.Frame):
         data = self.get_google_form_data(start_date, end_date)
         self.plot_world_map_bubbles(data)
 
-    def plot_sept_2025(self, event):
-        start_date, end_date = self.get_date_range("since_sept_2025")
+    def plot_sept_2024(self, event):
+        start_date, end_date = self.get_date_range("since_sept_2024")
+        data = self.get_google_form_data(start_date, end_date)
+        self.plot_world_map_bubbles(data)
+
+    def plot_current_month(self, event):
+        start_date, end_date = self.get_date_range("current_month")
+        data = self.get_google_form_data(start_date, end_date)
+        self.plot_world_map_bubbles(data)
+
+    def plot_1_month_ago(self, event):
+        start_date, end_date = self.get_date_range("1_month_ago")
+        data = self.get_google_form_data(start_date, end_date)
+        self.plot_world_map_bubbles(data)
+
+    def plot_2_months_ago(self, event):
+        start_date, end_date = self.get_date_range("2_months_ago")
+        data = self.get_google_form_data(start_date, end_date)
+        self.plot_world_map_bubbles(data)
+
+    def plot_3_months_ago(self, event):
+        start_date, end_date = self.get_date_range("3_months_ago")
         data = self.get_google_form_data(start_date, end_date)
         self.plot_world_map_bubbles(data)
 
