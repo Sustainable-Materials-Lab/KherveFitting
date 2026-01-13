@@ -25,14 +25,14 @@ class PCAnalysisWindow(wx.Frame):
         import platform
         system = platform.system()
         if system == 'Windows':
-            window_size = (1080, 750)
+            window_size = (1080, 770)
         elif system == 'Darwin':  # macOS
             window_size = (1080, 830)
         else:  # Linux
             window_size = (1080, 800)
 
         super().__init__(parent, title="Principal Component Analysis", size=window_size,
-                         style=wx.DEFAULT_FRAME_STYLE & ~(wx.RESIZE_BORDER | wx.MAXIMIZE_BOX))
+                         style=wx.DEFAULT_FRAME_STYLE) # & ~(wx.RESIZE_BORDER | wx.MAXIMIZE_BOX))
 
         # Store parent reference
         self.parent = parent
