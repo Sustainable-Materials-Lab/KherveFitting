@@ -2650,7 +2650,7 @@ class PlotManager:
                     if window.energy_scale == 'KE':
                         x_min = self.residuals_subplot.get_xlim()[1] - 0.4
                     else:
-                        x_min = self.residuals_subplot.get_xlim()[1] + 0.4
+                        x_min = self.residuals_subplot.get_xlim()[1] + 0.2
                     y_pos = np.mean(self.residuals_subplot.get_ylim())
                     if self.rsd_text:
                         try:
@@ -2663,9 +2663,9 @@ class PlotManager:
                                                                 horizontalalignment='right',
                                                                 verticalalignment='center',
                                                                 fontsize=9,
-                                                                color=self.residual_color,
-                                                                alpha=self.residual_alpha + 0.2,
-                                                                bbox=dict(facecolor='white', edgecolor='none'))
+                                                                # color=self.residual_color,
+                                                                # alpha=self.residual_alpha + 0.2,
+                                                                bbox=dict(facecolor='none', edgecolor='none'))
 
         # Only update main plot ylabel if residuals are not in subplot
         if self.residuals_state != 2:

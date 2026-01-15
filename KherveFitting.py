@@ -3397,6 +3397,7 @@ class MyFrame(wx.Frame):
         if os.path.exists('config.json'):
             with open('config.json', 'r') as f:
                 config = json.load(f)
+                self.usage_tracking = config.get('usage_tracking', True)
                 self.plot_style = config.get('plot_style', self.plot_style)
                 self.scatter_size = config.get('scatter_size', self.scatter_size)
                 self.line_width = config.get('line_width', self.line_width)
@@ -3516,6 +3517,7 @@ class MyFrame(wx.Frame):
 
     def save_config(self):
         config = {
+            'usage_tracking': self.usage_tracking,
             'plot_style': self.plot_style,
             'scatter_size': self.scatter_size,
             'line_width': self.line_width,
