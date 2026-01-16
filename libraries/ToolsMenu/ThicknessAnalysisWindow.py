@@ -19,11 +19,11 @@ class ThicknessAnalysisWindow(wx.Frame):
         # else:
         #     window_size = (1100, 720)
         if 'wxMac' in wx.PlatformInfo:
-            window_size = (800, 540)  # Smaller for macOS
+            window_size = (1000, 800)  # Smaller for macOS
         elif 'wxGTK' in wx.PlatformInfo:  # Linux
-            window_size = (920, 660)
+            window_size = (1020, 800)
         else:  # Windows
-            window_size = (920, 750)
+            window_size = (1020, 800)
 
         super().__init__(parent, title="XPS Thickness Analysis",
                          size=window_size, style=wx.DEFAULT_FRAME_STYLE)
@@ -83,7 +83,7 @@ class ThicknessAnalysisWindow(wx.Frame):
         # Get the main panel from TougaardAnalysisWindow and reparent it
         for child in self.tougaard_window.GetChildren():
             child.Reparent(self.tougaard_container)
-            tougaard_sizer.Add(child, 0, wx.EXPAND)
+            tougaard_sizer.Add(child, 0, wx.EXPAND,0)
             break
 
         self.tougaard_container.SetSizer(tougaard_sizer)
@@ -103,7 +103,7 @@ class ThicknessAnalysisWindow(wx.Frame):
         # Get the main panel from ThickogramWindow and reparent it
         for child in self.thickogram_window.GetChildren():
             child.Reparent(self.thickogram_container)
-            thickogram_sizer.Add(child, 1, wx.EXPAND)
+            thickogram_sizer.Add(child, 1, wx.EXPAND,0)
             break
 
         self.thickogram_container.SetSizer(thickogram_sizer)

@@ -197,8 +197,8 @@ class TougaardAnalysisWindow(wx.Frame):
         right_sizer.Add(self.canvas, 1, wx.EXPAND | wx.ALL, 0)
         right_panel.SetSizer(right_sizer)
 
-        main_sizer.Add(left_panel, 0, wx.EXPAND | wx.ALL, 2)
-        main_sizer.Add(right_panel, 1, wx.EXPAND | wx.ALL, 2)
+        main_sizer.Add(left_panel, 0, wx.EXPAND | wx.ALL, 0)
+        main_sizer.Add(right_panel, 1, wx.EXPAND | wx.ALL, 0)
         self.panel.SetSizer(main_sizer)
 
         self.init_plot()
@@ -594,7 +594,8 @@ class TougaardAnalysisWindow(wx.Frame):
         self.ax.set_xlabel('Binding Energy (eV)')
         self.ax.set_ylabel('Intensity (a.u.)')
         self.ax.ticklabel_format(axis='y', style='scientific', scilimits=(0, 0))
-        self.figure.tight_layout()
+        self.figure.tight_layout(pad=0.5)
+        self.figure.subplots_adjust(left=0.07, right=0.98, top=0.97, bottom=0.07)
         self.canvas.draw()
 
     def populate_core_levels(self):
@@ -825,15 +826,16 @@ class TougaardAnalysisWindow(wx.Frame):
 
         ctrl = self.range_controls[idx]
 
-        # Baseline markers can move freely in both X and Y
+        # Start marker stays on data (only X moves, Y follows data)
         if self.dragging_line == 'bl_start':
             ctrl['bl_start'].SetValue(event.xdata)
-            ctrl['bl_start_y'] = event.ydata
+            ctrl['bl_start_y'] = self.get_baseline_intensity(event.xdata)  # Stay on data
             self.update_plot()
             return
+        # End marker can move freely in both X and Y
         elif self.dragging_line == 'bl_end':
             ctrl['bl_end'].SetValue(event.xdata)
-            ctrl['bl_end_y'] = event.ydata
+            ctrl['bl_end_y'] = event.ydata  # Free Y movement
             self.update_plot()
             return
         elif self.dragging_line == 'peak_start':
@@ -863,7 +865,7 @@ class TougaardAnalysisWindow(wx.Frame):
             return
 
         # Plot raw data
-        self.ax.plot(self.x_data, self.y_data, 'b-', label='Raw Data', linewidth=1)
+        self.ax.plot(self.x_data, self.y_data, 'k-', label='Raw Data', linewidth=1)
 
         num_ranges = self.num_ranges_spin.GetValue()
         active_idx = self.active_range_idx
@@ -901,11 +903,11 @@ class TougaardAnalysisWindow(wx.Frame):
                     # Plot baseline line
                     self.ax.plot([bl_result['bl_start_be'], bl_result['bl_end_be'], bl_result['line_extend_be']],
                                  [bl_result['bl_start_y'], bl_result['bl_end_y'], bl_result['line_extend_y']],
-                                 'm-', label='Baseline', linewidth=1.5, alpha=0.7)
+                                 'g-', label='Baseline', linewidth=1.5, alpha=0.7)
 
                     # Draw draggable markers (smaller size)
                     self.ax.plot(bl_result['bl_start_be'], bl_result['bl_start_y'], 'ms',
-                                 markersize=7, markeredgecolor='black', label='Baseline Points')
+                                 markersize=7, markeredgecolor='black')#, label='Baseline Points')
                     self.ax.plot(bl_result['bl_end_be'], bl_result['bl_end_y'], 'ms',
                                  markersize=7, markeredgecolor='black')
 
@@ -914,12 +916,12 @@ class TougaardAnalysisWindow(wx.Frame):
             if result.get('background_with_slope') is not None:
                 bg = result['background_with_slope']
                 color = result['color']
-                peak_start = result['peak_start']
+                bl_start_be = result['bl_start_be']
                 bg_point = result['bg_point']
 
-                # Only plot background between peak_start and bg_point (not from bl_start_be)
-                min_be = min(peak_start, bg_point)
-                max_be = max(peak_start, bg_point)
+                # Plot background from bl_start_be to bg_point
+                min_be = min(bl_start_be, bg_point)
+                max_be = max(bl_start_be, bg_point)
                 mask = (self.x_data >= min_be) & (self.x_data <= max_be)
 
                 self.ax.plot(self.x_data[mask], bg[mask], '-',
@@ -928,7 +930,7 @@ class TougaardAnalysisWindow(wx.Frame):
 
         self.ax.set_xlabel('Binding Energy (eV)')
         self.ax.set_ylabel('Intensity (a.u.)')
-        self.ax.set_title(self.current_sheet if self.current_sheet else '')
+        # self.ax.set_title(self.current_sheet if self.current_sheet else '')
         self.ax.legend(loc='upper right', fontsize=8)
 
         # Restore limits if preserving, otherwise set default
@@ -944,7 +946,7 @@ class TougaardAnalysisWindow(wx.Frame):
             self._plot_initialized = True
 
         self.ax.ticklabel_format(axis='y', style='scientific', scilimits=(0, 0))
-        self.figure.tight_layout()
+        self.figure.subplots_adjust(left=0.07, right=0.98, top=0.97, bottom=0.07)
         self.canvas.draw()
 
     def on_analyse(self, event):
@@ -1054,9 +1056,9 @@ class TougaardAnalysisWindow(wx.Frame):
             'lin_bg_display': None
         }
 
-        # Extract data between Peak Start and Bkg Point for Tougaard calculation
-        min_be = min(peak_start, bg_point)
-        max_be = max(peak_start, bg_point)
+        # Extract data between Start BE marker and Bkg Point for Tougaard calculation
+        min_be = min(bl_start_be, bg_point)
+        max_be = max(bl_start_be, bg_point)
         range_mask = (self.x_data >= min_be) & (self.x_data <= max_be)
 
         x_range = self.x_data[range_mask]
@@ -1150,6 +1152,20 @@ class TougaardAnalysisWindow(wx.Frame):
 Core Level: {self.current_sheet}
 IMFP (λ): {lambda_nm:.2f} nm | C: {self.c_ctrl.GetValue():.2f} eV²
 Angle θ: {self.theta_ctrl.GetValue():.2f}°
+
+INTERPRETATION GUIDE
+--------------------
+Ap/B (eV)  | Depth Distribution
+-----------+----------------------
+  > 30     | Surface localized
+  20-30    | Uniform distribution
+  < 20     | Subsurface/buried
+
+L (λ)      | Concentration Profile
+-----------+----------------------
+  L > 0    | Surface enriched
+  |L| > 6  | Nearly uniform
+  L < 0    | Subsurface/buried
 """
 
         for result in self.analysis_results:

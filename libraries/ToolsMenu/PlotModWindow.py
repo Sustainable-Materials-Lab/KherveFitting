@@ -59,6 +59,8 @@ class PlotModWindow(wx.Frame):
         # Create sizer for the panel contents
         smooth_sizer = wx.BoxSizer(wx.VERTICAL)
 
+
+
         # Add title text inside the panel
         title_text = wx.StaticText(smooth_panel, label="Smoothing Mod.")
         title_font = title_text.GetFont()
@@ -214,16 +216,27 @@ class PlotModWindow(wx.Frame):
         self.const_op = wx.ComboBox(const_panel, choices=["Multiply", "Divide", "Add", "Subtract", "Special"],
                                     style=wx.CB_READONLY)
         self.const_op.SetValue("Multiply")
+        self.const_op.Bind(wx.EVT_COMBOBOX, self.on_const_op_change)
         const_sizer.Add(self.const_op, 0, wx.EXPAND | wx.ALL, 5)
 
-        self.const_value = wx.SpinCtrlDouble(const_panel, value="1.0", min=0.001, max=10000000.0, inc=0.1)
+        # Value input - switches between SpinCtrl and TextCtrl
+        self.const_value = wx.SpinCtrlDouble(const_panel, min=-10000000.0, max=10000000.0, inc=0.1)
+        self.const_value.SetValue(1.0)
+        self.const_value.SetDigits(2)
+        self.equation_text = wx.TextCtrl(const_panel, value="0", style=wx.TE_PROCESS_ENTER)
+        self.equation_text.SetToolTip(wx.ToolTip("Enter equation using 'x' for binding energy and 'y' for intensity\nExamples: y+5*x**2+10, y*3/x-5, y+3*log(x)-5, y*sin(x)-5"))
+        self.equation_text.Hide()
+
         const_sizer.Add(wx.StaticText(const_panel, label="Value:"), 0, wx.ALL, 5)
         const_sizer.Add(self.const_value, 0, wx.EXPAND | wx.ALL, 5)
+        const_sizer.Add(self.equation_text, 0, wx.EXPAND | wx.ALL, 5)
 
         const_btn = wx.Button(const_panel, label="Apply Operation")
         const_btn.SetMinSize((125, 40))
         const_btn.Bind(wx.EVT_BUTTON, self.on_apply_constant)
         const_sizer.Add(const_btn, 0, wx.EXPAND | wx.ALL, 5)
+
+        self.const_panel = const_panel
         const_panel.SetSizer(const_sizer)
 
         # BE Shift section
@@ -336,43 +349,101 @@ class PlotModWindow(wx.Frame):
         panel.SetSizer(grid_sizer)
         self.Centre()
 
+    def on_const_op_change(self, event):
+        """Toggle between SpinCtrl and TextCtrl based on operation type"""
+        if self.const_op.GetValue() == "Special":
+            self.const_value.Hide()
+            self.equation_text.Show()
+        else:
+            self.equation_text.Hide()
+            self.const_value.Show()
+        self.const_panel.Layout()
+
     # Method for constant operation
     def on_apply_constant(self, event):
-        sheet_name = self.parent.sheet_combobox.GetValue()
-        constant = self.const_value.GetValue()
-        operation = self.const_op.GetValue()
+        """Apply constant or special modification to intensity"""
+        try:
+            # Get current sheet name
+            current_sheet = self.parent.sheet_combobox.GetValue()
 
-        # Check for special toggle operation
-        if operation == "Special" and constant == 1976:
-            self.toggle_hidden_controls()
+            if not current_sheet or current_sheet not in self.parent.Data['Core levels']:
+                wx.MessageBox("No data loaded", "Error", wx.OK | wx.ICON_ERROR)
+                return
+
+            # Get data from Data structure
+            x = np.array(self.parent.Data['Core levels'][current_sheet]['B.E.'])
+            original_y = np.array(self.parent.Data['Core levels'][current_sheet]['Raw Data'])
+
+        except Exception as e:
+            wx.MessageBox(f"Error reading data: {str(e)}", "Error", wx.OK | wx.ICON_ERROR)
             return
 
-        x = self.parent.Data['Core levels'][sheet_name]['B.E.']
-        y = self.parent.Data['Core levels'][sheet_name]['Raw Data']
+        operation = self.const_op.GetValue()
 
-        # Apply the operation
-        if operation == "Multiply":
-            modified_y = [val * constant for val in y]
-        elif operation == "Divide":
-            modified_y = [val / constant for val in y]
-        elif operation == "Add":
-            modified_y = [val + constant for val in y]
-        elif operation == "Subtract":
-            modified_y = [val - constant for val in y]
+        if operation == "Special":
+            equation_str = self.equation_text.GetValue().strip()
+            if not equation_str:
+                wx.MessageBox("Please enter an equation", "Error", wx.OK | wx.ICON_ERROR)
+                return
 
-        # Get the base name
-        import re
-        match = re.match(r'([A-Za-z]+(?:\d+[spdfg]+)?)', sheet_name)
-        if match:
-            base_name = match.group(1)
+            # Store original equation for logging
+            original_equation = equation_str
+
+            try:
+                equation_str = equation_str.replace('^', '**')
+                equation_str = equation_str.replace('log(', 'np.log10(')
+                equation_str = equation_str.replace('ln(', 'np.log(')
+                equation_str = equation_str.replace('sin(', 'np.sin(')
+                equation_str = equation_str.replace('cos(', 'np.cos(')
+                equation_str = equation_str.replace('tan(', 'np.tan(')
+                equation_str = equation_str.replace('sqrt(', 'np.sqrt(')
+                equation_str = equation_str.replace('exp(', 'np.exp(')
+
+                # Evaluate equation - this IS the modified data
+                # Use 'y' for original intensity in equations
+                y = original_y
+                modified_y = eval(equation_str)
+
+                if hasattr(self.parent, 'StatWin'):
+                    self.parent.StatWin.General.write(f"Special Mod applied: {original_equation}\n")
+
+            except Exception as e:
+                wx.MessageBox(f"Invalid equation: {str(e)}", "Error", wx.OK | wx.ICON_ERROR)
+                return
+
         else:
-            base_name = sheet_name
+            value = self.const_value.GetValue()
 
-        # Find the earliest available row
+            if operation == "Multiply":
+                modified_y = original_y * value
+            elif operation == "Divide":
+                if value == 0:
+                    wx.MessageBox("Cannot divide by zero", "Error", wx.OK | wx.ICON_ERROR)
+                    return
+                modified_y = original_y / value
+            elif operation == "Add":
+                modified_y = original_y + value
+            elif operation == "Subtract":
+                modified_y = original_y - value
+
+            if hasattr(self.parent, 'StatWin'):
+                self.parent.StatWin.General.write(f"{operation} by {value:.2f} applied\n")
+
+        # Get base name for new sheet
+        import re
+        match = re.match(r'([A-Za-z]+\d*[spdfg]*)', current_sheet)
+        base_name = match.group(1) if match else current_sheet
+
+        # Find earliest available row name
         new_sheet_name = self.get_earliest_row_name(base_name)
 
-        # Save the data
-        self.save_modified_data(x, modified_y, new_sheet_name, f"{operation}d")
+        # Save the modified data
+        if operation == "Special":
+            self.save_modified_data(x, modified_y, new_sheet_name, f"Special_{original_equation}")
+        else:
+            self.save_modified_data(x, modified_y, new_sheet_name, operation)
+
+
 
     def get_earliest_row_name(self, base_name):
         """
