@@ -66,6 +66,10 @@ class TougaardAnalysisWindow(wx.Frame):
         self.zoom_start = None
         self.zoom_rect = None
 
+        # Find peak mode state
+        self.find_peak_mode = False
+        self.find_peak_range_idx = None
+
         # Plot state
         self._plot_initialized = False
 
@@ -216,12 +220,19 @@ class TougaardAnalysisWindow(wx.Frame):
 
         sizer = wx.BoxSizer(wx.VERTICAL)
 
-        # Color indicator row
+        # Header row with color indicator and Find Peak button
         header = wx.BoxSizer(wx.HORIZONTAL)
         color_indicator = wx.Panel(panel, size=(20, 20))
         color_indicator.SetBackgroundColour(color)
         header.Add(color_indicator, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
         header.Add(wx.StaticText(panel, label=f"Range {idx + 1}"), 0, wx.ALIGN_CENTER_VERTICAL)
+        header.AddStretchSpacer()
+
+        # Find Peak button
+        find_peak_btn = wx.Button(panel, label="Find Peak", size=(70, 22))
+        find_peak_btn.SetToolTip("Click on a peak maximum to auto-set range and baseline")
+        find_peak_btn.Bind(wx.EVT_BUTTON, lambda evt, i=idx: self.on_find_peak_click(evt, i))
+        header.Add(find_peak_btn, 0, wx.ALIGN_CENTER_VERTICAL)
         sizer.Add(header, 0, wx.EXPAND | wx.ALL, 3)
 
         # Baseline markers for this range
@@ -286,6 +297,7 @@ class TougaardAnalysisWindow(wx.Frame):
             'peak_start': peak_start_ctrl,
             'peak_end': peak_end_ctrl,
             'bg_point_label': bg_point_label,
+            'find_peak_btn': find_peak_btn,
             'color': color
         })
 
@@ -296,6 +308,119 @@ class TougaardAnalysisWindow(wx.Frame):
         self.active_range_idx = self.ranges_notebook.GetSelection()
         self.update_plot()
         event.Skip()
+
+    def on_find_peak_click(self, event, range_idx):
+        """Enter find peak mode - wait for user to click on a peak."""
+        if self.x_data is None:
+            wx.MessageBox("Please select a core level first.", "No Data", wx.OK | wx.ICON_WARNING)
+            return
+
+        self.find_peak_mode = True
+        self.find_peak_range_idx = range_idx
+
+        # Change cursor to crosshair
+        self.canvas.SetCursor(wx.Cursor(wx.CURSOR_CROSS))
+
+        # Update button to show active state
+        ctrl = self.range_controls[range_idx]
+        ctrl['find_peak_btn'].SetLabel("Click peak...")
+        ctrl['find_peak_btn'].SetBackgroundColour(wx.Colour(255, 200, 100))
+
+        # Switch to this tab if not already
+        self.ranges_notebook.SetSelection(range_idx)
+        self.active_range_idx = range_idx
+        self.update_plot()
+
+    def on_find_peak_complete(self, click_be):
+        """Complete find peak mode - set up range and baseline based on click position."""
+        if self.x_data is None or self.find_peak_range_idx is None:
+            return
+
+        range_idx = self.find_peak_range_idx
+        ctrl = self.range_controls[range_idx]
+
+        # Reset button appearance
+        ctrl['find_peak_btn'].SetLabel("Find Peak")
+        ctrl['find_peak_btn'].SetBackgroundColour(wx.NullColour)
+
+        # Reset cursor
+        self.canvas.SetCursor(wx.Cursor(wx.CURSOR_ARROW))
+
+        # Find the actual peak maximum near the click position
+        # Search within ±3 eV of click
+        search_range = 3.0
+        search_mask = (self.x_data >= click_be - search_range) & (self.x_data <= click_be + search_range)
+
+        if not np.any(search_mask):
+            self.find_peak_mode = False
+            self.find_peak_range_idx = None
+            return
+
+        x_search = self.x_data[search_mask]
+        y_search = self.y_data[search_mask]
+
+        # Find maximum
+        max_idx = np.argmax(y_search)
+        peak_max_be = x_search[max_idx]
+
+        # Auto-detect peak boundaries by finding where intensity drops significantly
+        # Start from peak maximum and go both directions
+        peak_max_intensity = y_search[max_idx]
+
+        # Find baseline level (average of edges of search region)
+        baseline_estimate = (np.mean(y_search[:3]) + np.mean(y_search[-3:])) / 2
+        threshold = baseline_estimate + (peak_max_intensity - baseline_estimate) * 0.1
+
+        # Search for peak start (lower BE side, which is higher index in XPS)
+        # Go from peak max towards lower BE
+        peak_start_be = peak_max_be - 5.0  # Default
+        peak_end_be = peak_max_be + 5.0    # Default
+
+        # Find where intensity crosses threshold on each side
+        full_max_idx = np.argmin(np.abs(self.x_data - peak_max_be))
+
+        # Search towards lower BE (higher indices for reversed XPS data)
+        for i in range(full_max_idx, min(full_max_idx + 50, len(self.x_data))):
+            if self.y_data[i] < threshold:
+                peak_end_be = self.x_data[i]
+                break
+
+        # Search towards higher BE (lower indices)
+        for i in range(full_max_idx, max(full_max_idx - 50, 0), -1):
+            if self.y_data[i] < threshold:
+                peak_start_be = self.x_data[i]
+                break
+
+        # Ensure peak_start < peak_end (in BE terms, start is lower value)
+        if peak_start_be > peak_end_be:
+            peak_start_be, peak_end_be = peak_end_be, peak_start_be
+
+        # Set peak range controls
+        ctrl['peak_start'].SetValue(peak_start_be)
+        ctrl['peak_end'].SetValue(peak_end_be)
+
+        # Set baseline markers a few eV before peak_start
+        bl_end_be = peak_start_be - 2.0
+        bl_start_be = bl_end_be - 5.0
+
+        # Clamp to data range
+        bl_start_be = np.clip(bl_start_be, self.x_data.min(), self.x_data.max())
+        bl_end_be = np.clip(bl_end_be, self.x_data.min(), self.x_data.max())
+
+        ctrl['bl_start'].SetValue(bl_start_be)
+        ctrl['bl_end'].SetValue(bl_end_be)
+
+        # Set Y positions on the data
+        ctrl['bl_start_y'] = self.get_baseline_intensity(bl_start_be)
+        ctrl['bl_end_y'] = self.get_baseline_intensity(bl_end_be)
+
+        # Reset state
+        self.find_peak_mode = False
+        self.find_peak_range_idx = None
+
+        # Update display
+        self.update_bg_point_labels()
+        self.update_plot()
 
     def on_num_ranges_change(self, event):
         """Show/hide range tabs based on selected number."""
@@ -599,6 +724,11 @@ class TougaardAnalysisWindow(wx.Frame):
         if event.inaxes != self.ax or event.button != 1:
             return
 
+        # Handle find peak mode
+        if self.find_peak_mode:
+            self.on_find_peak_complete(event.xdata)
+            return
+
         # Handle zoom selection mode
         if self.zoom_selecting:
             self.zoom_start = (event.xdata, event.ydata)
@@ -606,36 +736,33 @@ class TougaardAnalysisWindow(wx.Frame):
 
         x_click = event.xdata
         xlim = self.ax.get_xlim()
-        tol_x = abs(xlim[1] - xlim[0]) * 0.02
+        tol_x = abs(xlim[1] - xlim[0]) * 0.015  # Smaller tolerance
 
         # Only interact with the active range's markers
         active_idx = self.active_range_idx
         if active_idx < len(self.range_controls):
             ctrl = self.range_controls[active_idx]
 
-            # Check baseline markers for active range
+            # Get all draggable positions
             bl_start = ctrl['bl_start'].GetValue()
             bl_end = ctrl['bl_end'].GetValue()
-
-            if abs(x_click - bl_start) < tol_x:
-                self.dragging_line = 'bl_start'
-                self.dragging_range_idx = active_idx
-                return
-            elif abs(x_click - bl_end) < tol_x:
-                self.dragging_line = 'bl_end'
-                self.dragging_range_idx = active_idx
-                return
-
-            # Check peak range markers for active range
             peak_start = ctrl['peak_start'].GetValue()
             peak_end = ctrl['peak_end'].GetValue()
 
-            if abs(x_click - peak_start) < tol_x:
-                self.dragging_line = 'peak_start'
-                self.dragging_range_idx = active_idx
-                return
-            elif abs(x_click - peak_end) < tol_x:
-                self.dragging_line = 'peak_end'
+            # Calculate distances to all elements
+            distances = [
+                ('peak_start', abs(x_click - peak_start)),
+                ('peak_end', abs(x_click - peak_end)),
+                ('bl_start', abs(x_click - bl_start)),
+                ('bl_end', abs(x_click - bl_end)),
+            ]
+
+            # Sort by distance and pick the closest one within tolerance
+            distances.sort(key=lambda x: x[1])
+            closest_name, closest_dist = distances[0]
+
+            if closest_dist < tol_x:
+                self.dragging_line = closest_name
                 self.dragging_range_idx = active_idx
                 return
 
@@ -776,23 +903,23 @@ class TougaardAnalysisWindow(wx.Frame):
                                  [bl_result['bl_start_y'], bl_result['bl_end_y'], bl_result['line_extend_y']],
                                  'm-', label='Baseline', linewidth=1.5, alpha=0.7)
 
-                    # Draw draggable markers
+                    # Draw draggable markers (smaller size)
                     self.ax.plot(bl_result['bl_start_be'], bl_result['bl_start_y'], 'ms',
-                                 markersize=10, markeredgecolor='black', label='Baseline Points')
+                                 markersize=7, markeredgecolor='black', label='Baseline Points')
                     self.ax.plot(bl_result['bl_end_be'], bl_result['bl_end_y'], 'ms',
-                                 markersize=10, markeredgecolor='black')
+                                 markersize=7, markeredgecolor='black')
 
         # Plot analysis results (Tougaard backgrounds) if available
         for result in self.analysis_results:
             if result.get('background_with_slope') is not None:
                 bg = result['background_with_slope']
                 color = result['color']
-                bl_start_be = result['bl_start_be']
+                peak_start = result['peak_start']
                 bg_point = result['bg_point']
 
-                # Only plot background between bl_start_be and bg_point
-                min_be = min(bl_start_be, bg_point)
-                max_be = max(bl_start_be, bg_point)
+                # Only plot background between peak_start and bg_point (not from bl_start_be)
+                min_be = min(peak_start, bg_point)
+                max_be = max(peak_start, bg_point)
                 mask = (self.x_data >= min_be) & (self.x_data <= max_be)
 
                 self.ax.plot(self.x_data[mask], bg[mask], '-',
@@ -927,46 +1054,50 @@ class TougaardAnalysisWindow(wx.Frame):
             'lin_bg_display': None
         }
 
-        # Create the subtraction line for this range
-        subtraction_line = raw_data_at_start + slope * (self.x_data - bl_start_be)
-
-        # Subtract the line from raw data to get corrected data
-        y_corrected = self.y_data - subtraction_line
-
         # Extract data between Peak Start and Bkg Point for Tougaard calculation
         min_be = min(peak_start, bg_point)
         max_be = max(peak_start, bg_point)
         range_mask = (self.x_data >= min_be) & (self.x_data <= max_be)
 
         x_range = self.x_data[range_mask]
-        y_range = y_corrected[range_mask]
+        y_raw_range = self.y_data[range_mask]
 
         if len(x_range) < 5:
             return result
 
-        # Calculate Tougaard background on this range of corrected data
+        # Create subtraction line for this range based on the baseline slope
+        # The line passes through (bl_start_be, raw_data_at_start) with given slope
+        subtraction_line_range = raw_data_at_start + slope * (x_range - bl_start_be)
+
+        # Subtract the baseline slope from the raw data in this range
+        y_corrected_range = y_raw_range - subtraction_line_range
+
+        # Calculate Tougaard background on the corrected data
         background_range, fitted_B = self.calculate_u2_tougaard_background(
-            x_range, y_range, C, bg_point)
+            x_range, y_corrected_range, C, bg_point)
 
         if background_range is None:
             return result
 
-        # Create full background array and insert the calculated range
+        # Add the subtraction line back to get background in raw data coordinates
+        background_with_slope_range = background_range + subtraction_line_range
+
+        # Create full arrays
         background = np.zeros_like(self.x_data)
         background[range_mask] = background_range
 
+        background_with_slope = np.zeros_like(self.x_data)
+        background_with_slope[range_mask] = background_with_slope_range
+
         result['background'] = background
+        result['background_with_slope'] = background_with_slope
         result['fitted_B'] = fitted_B
 
-        # Add the subtraction line back to the Tougaard background for display
-        background_with_slope = background + subtraction_line
-        result['background_with_slope'] = background_with_slope
-
-        # Calculate peak area using corrected data
+        # Calculate peak area using corrected data in the peak region
         peak_min, peak_max = min(peak_start, peak_end), max(peak_start, peak_end)
-        peak_mask = (self.x_data >= peak_min) & (self.x_data <= peak_max)
-        x_peak = self.x_data[peak_mask]
-        y_peak = y_corrected[peak_mask]
+        peak_mask_in_range = (x_range >= peak_min) & (x_range <= peak_max)
+        x_peak = x_range[peak_mask_in_range]
+        y_peak = y_corrected_range[peak_mask_in_range]
 
         if len(x_peak) < 3:
             return result
@@ -987,9 +1118,9 @@ class TougaardAnalysisWindow(wx.Frame):
         result['lin_bg_display'] = lin_bg + sub_line_peak
 
         # Calculate B increase at bg_point using corrected data
-        baseline = np.mean(y_range[-5:])
+        baseline = np.mean(y_corrected_range[-5:])
         bg_idx = np.argmin(np.abs(x_range - bg_point))
-        B_increase = y_range[bg_idx] - baseline
+        B_increase = y_corrected_range[bg_idx] - baseline
         result['B_increase'] = B_increase
 
         # Ap/B ratio
@@ -1055,6 +1186,12 @@ Angle θ: {self.theta_ctrl.GetValue():.2f}°
             else:
                 L_interp = "N/A"
 
+            # Format values safely (handle None)
+            peak_area_str = f"{peak_area:.2f}" if peak_area is not None else "N/A"
+            ap_b_str = f"{ap_b_ratio:.2f}" if ap_b_ratio is not None else "N/A"
+            L_lambda_str = f"{L_lambda:.2f}" if L_lambda is not None else "N/A"
+            L_nm_str = f"{L_nm:.2f}" if L_nm is not None else "N/A"
+
             report += f"""
 --- RANGE {idx + 1} ---
 Baseline Start: {bl_start_be:.2f} eV
@@ -1062,9 +1199,9 @@ Peak: {result['peak_start']:.2f} to {result['peak_end']:.2f} eV
 Bkg Point: {result['bg_point']:.2f} eV
 
 B (fitted): {fitted_B:.2f} eV² (B₀={B0:.2f})
-Peak Area: {peak_area:.2f}
-Ap/B: {ap_b_ratio:.2f} eV → {apb_interp}
-L: {L_lambda:.2f}λ = {L_nm:.2f} nm → {L_interp}
+Peak Area: {peak_area_str}
+Ap/B: {ap_b_str} eV → {apb_interp}
+L: {L_lambda_str}λ = {L_nm_str} nm → {L_interp}
 """
 
         return report

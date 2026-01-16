@@ -23,7 +23,7 @@ class ThicknessAnalysisWindow(wx.Frame):
         elif 'wxGTK' in wx.PlatformInfo:  # Linux
             window_size = (920, 660)
         else:  # Windows
-            window_size = (920, 660)
+            window_size = (920, 750)
 
         super().__init__(parent, title="XPS Thickness Analysis",
                          size=window_size, style=wx.DEFAULT_FRAME_STYLE)

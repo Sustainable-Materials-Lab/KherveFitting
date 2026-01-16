@@ -1382,14 +1382,17 @@ def fit_peaks(window, peak_params_grid, evaluate=False):
                             peak_values = f(x_values_filtered)
                             total_fit += peak_values
 
-                rsd = round(PeakFunctions.calculate_rsd(y_values_filtered, total_fit + background_filtered), 3)
+                rsd_result = PeakFunctions.calculate_rsd(y_values_filtered, total_fit + background_filtered)
             else:
                 # For other models
-                rsd = round(PeakFunctions.calculate_rsd(y_values_filtered, result.best_fit + background_filtered), 3)
+                rsd_result = PeakFunctions.calculate_rsd(y_values_filtered, result.best_fit + background_filtered)
 
+            old_rsd, norm_chi, rsd_pct = rsd_result
             window.fit_results = {
                 'result': result,
-                'rsd': rsd,
+                'rsd': round(norm_chi, 3),
+                'rsd_old': round(old_rsd, 3),
+                'rsd_pct': round(rsd_pct, 3),
                 'chi_square': chi_square,
                 'red_chi_square': red_chi_square,
                 'nfev': result.nfev,
@@ -1442,7 +1445,7 @@ def fit_peaks(window, peak_params_grid, evaluate=False):
                                                          f' cps\nR²: {r_squared:.5f}\nChi²: {chi_square:.2f}\nRed. '
                                                          f'Chi²: {red_chi_square:.2f}\nIteration: {result.nfev}')
 
-            return r_squared, rsd, red_chi_square
+            return r_squared, norm_chi, red_chi_square
 
         else:
             raise ValueError("No data points found in the specified energy range for background subtraction")
