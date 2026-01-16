@@ -2619,9 +2619,12 @@ class PlotManager:
             else:
                 self.ax.get_xaxis().set_visible(True)
 
-        # Handle RSD text
-        rsd = PeakFunctions.calculate_rsd(window.y_values, overall_fit)
-        if rsd is not None:
+        # Handle RSD text - shows all three metrics for comparison
+        rsd_result = PeakFunctions.calculate_rsd(window.y_values, overall_fit)
+        if rsd_result is not None:
+            old_rsd, norm_chi, rsd_pct = rsd_result
+            rsd_label = f'Old: {old_rsd:.2f}  χ: {norm_chi:.2f}  RSD%: {rsd_pct:.2f}'
+
             if self.residuals_state == 1:  # For main plot
                 self.ax.get_xaxis().set_visible(True)
                 y_max = self.ax.get_ylim()[1]
@@ -2638,14 +2641,14 @@ class PlotManager:
                             print("Error: RSD text removal failed.")
                             pass
                     self.rsd_text = self.ax.text(x_min, residual_height,
-                                                 f'RSD: {rsd:.2f}',
+                                                 rsd_label,
                                                  horizontalalignment='right',
                                                  verticalalignment='center',
                                                  fontsize=9,
                                                  color=self.residual_color,
                                                  alpha=self.residual_alpha + 0.2,
                                                  bbox=dict(facecolor='white', edgecolor='none'))
-            elif self.residuals_state == 2:  # For subplot, don't check plot limits
+            elif self.residuals_state == 2:  # For subplot
                 if self.residuals_subplot:
                     if window.energy_scale == 'KE':
                         x_min = self.residuals_subplot.get_xlim()[1] - 0.4
@@ -2659,12 +2662,10 @@ class PlotManager:
                             print("Error: RSD text removal failed.")
                             pass
                     self.rsd_text = self.residuals_subplot.text(x_min, y_pos,
-                                                                f'RSD: {rsd:.2f}',
+                                                                rsd_label,
                                                                 horizontalalignment='right',
                                                                 verticalalignment='center',
                                                                 fontsize=9,
-                                                                # color=self.residual_color,
-                                                                # alpha=self.residual_alpha + 0.2,
                                                                 bbox=dict(facecolor='none', edgecolor='none'))
 
         # Only update main plot ylabel if residuals are not in subplot

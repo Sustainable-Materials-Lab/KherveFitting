@@ -523,7 +523,7 @@ class PeakFunctions:
         return rsd
 
     @staticmethod
-    def calculate_rsd(y_experimental, y_fitted):
+    def calculate_rsd_BEF_v1_71(y_experimental, y_fitted):
         """
         Calculate weighted RSD for XPS data using Poisson statistics weighting.
         Returns RSD as a percentage.
@@ -547,6 +547,58 @@ class PeakFunctions:
             rsd = 0.0
 
         return rsd
+
+    @staticmethod
+    def calculate_rsd(y_experimental, y_fitted):
+        """
+        Calculate all three RSD metrics for comparison.
+        Returns tuple: (old_rsd, normalized_chi, rsd_percent)
+        """
+        old_rsd = PeakFunctions.calculate_rsd_old(y_experimental, y_fitted)
+        norm_chi = PeakFunctions.calculate_normalized_chi(y_experimental, y_fitted)
+        rsd_pct = PeakFunctions.calculate_rsd_percent(y_experimental, y_fitted)
+        return old_rsd, norm_chi, rsd_pct
+
+    @staticmethod
+    def calculate_rsd_old(y_experimental, y_fitted):
+        """
+        Original weighted RSD calculation (pre-v1.7).
+        """
+        residuals = y_experimental - y_fitted
+        safe_denominator = np.maximum(y_experimental, 1.0)
+        weighted_residuals = residuals / np.sqrt(safe_denominator)
+        weighted_rms = np.sqrt(np.mean(weighted_residuals ** 2))
+        mean_signal = np.mean(y_experimental)
+        if mean_signal > 0:
+            return (weighted_rms / np.sqrt(mean_signal)) * 100.0
+        return 0.0
+
+    @staticmethod
+    def calculate_normalized_chi(y_experimental, y_fitted):
+        """
+        Normalized chi (sqrt of reduced chi-squared) for XPS data.
+        Uses Poisson statistics where variance = signal intensity.
+        ~1.0 indicates a statistically good fit.
+        """
+        residuals = y_experimental - y_fitted
+        n = len(residuals)
+        variance = np.maximum(y_experimental, 1.0)
+        chi_squared = np.sum(residuals ** 2 / variance)
+        reduced_chi_sq = chi_squared / n
+        return np.sqrt(reduced_chi_sq)
+
+    @staticmethod
+    def calculate_rsd_percent(y_experimental, y_fitted):
+        """
+        Relative Standard Deviation as percentage.
+        RSD% = (RMSE / mean_signal) * 100
+        """
+        residuals = y_experimental - y_fitted
+        rmse = np.sqrt(np.mean(residuals ** 2))
+        mean_signal = np.mean(y_experimental)
+        if mean_signal > 0:
+            return (rmse / mean_signal) * 100.0
+        return 0.0
 
     @staticmethod
     def get_doniach_sunjic_height(amplitude, sigma, gamma, skew):
