@@ -25,7 +25,8 @@ from libraries.ToolsMenu.PlotModWindow import PlotModWindow
 from libraries.MarketResearch import launch_registration_form
 from libraries.HelpMenu.Help import report_bug
 from Functions import (on_save_plot_pdf, on_save_plot_svg, on_exit)
-from libraries.FileMenu.Open import import_avantage_file, open_avg_file, import_multiple_avantage_files, import_multiple_avg_files
+from libraries.FileMenu.Open import import_avantage_file, import_multiple_avantage_files
+from libraries.FileMenu.AVG_Import import open_avg_file, import_multiple_avg_files
 from libraries.FileMenu.Save import save_all_sheets_with_plots, create_plot_script_from_excel, refresh_sheets, undo, redo
 from libraries.HelpMenu.Help import show_shortcuts, show_mini_game, on_about
 from libraries.Utilities import add_draggable_text

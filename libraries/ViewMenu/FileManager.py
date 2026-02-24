@@ -9,7 +9,7 @@ import shutil
 import sys
 import tempfile
 from libraries.FileMenu.Save import save_state
-
+from libraries.FileMenu.AVG_Import import open_avg_file_direct
 
 
 class FileManagerWindow(wx.Frame):
@@ -7604,7 +7604,7 @@ from libraries.FileMenu.Open import (
     open_xlsx_file,
     open_vamas_file,
     open_kal_file,
-    open_avg_file_direct,
+    # open_avg_file_direct, # moved to AVG_Import
     open_spe_file,
     open_mrs_file,
     open_vg_microtech_file,
