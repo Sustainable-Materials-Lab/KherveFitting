@@ -1604,7 +1604,7 @@ def evaluate_constraint(constraint, peak_params_grid, param_name, current_value)
         return None
 
     # Handle the case A+1.5 or A*1.5 or A/1.5 or A-1.5
-    match = re.match(r'([A-J])([+\-*/])(-?\d+\.?\d*)', constraint)
+    match = re.match(r'([A-Z])([+\-*/])(-?\d+\.?\d*)', constraint)
     if match:
         peak, op, value = match.groups()
         peak_value = get_peak_value(peak_params_grid, peak, param_name)

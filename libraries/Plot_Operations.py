@@ -2623,7 +2623,7 @@ class PlotManager:
         rsd_result = PeakFunctions.calculate_rsd(window.y_values, overall_fit)
         if rsd_result is not None:
             old_rsd, norm_chi, rsd_pct = rsd_result
-            rsd_label = f'Old: {old_rsd:.2f}  χ: {norm_chi:.2f}  RSD%: {rsd_pct:.2f}'
+            rsd_label = f'RSD: {old_rsd:.2f}, χ: {norm_chi:.2f}' #  RSD%: {rsd_pct:.2f}'
 
             if self.residuals_state == 1:  # For main plot
                 self.ax.get_xaxis().set_visible(True)
