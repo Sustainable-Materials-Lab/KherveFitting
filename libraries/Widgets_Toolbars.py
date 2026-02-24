@@ -44,7 +44,7 @@ from libraries.UsageAnalytics import show_usage_stats_window
 from libraries.FileMenu.Open import import_generic_excel_file
 from libraries.FileMenu.Igor_Import import import_igor_dat_file, import_igor_itx_file, import_multiple_igor_files
 from libraries.FileMenu.VGD_Import import import_vgd_file, import_multiple_vgd_files
-from libraries.FileMenu.Scienta_Import import import_scienta_map, import_scienta_file
+from libraries.FileMenu.Scienta_Import import import_scienta_map, import_scienta_file, import_h5_scienta_file
 
 # With conditional imports:
 import platform
@@ -805,6 +805,8 @@ def create_menu(window):
     window.Bind(wx.EVT_MENU, lambda evt: import_scienta_map(window), scienta_item)
     scienta_file_item = scienta_menu.Append(wx.ID_ANY, "Plot file (.txt)")
     window.Bind(wx.EVT_MENU, lambda evt: import_scienta_file(window), scienta_file_item)
+    import_scienta_h5_item = scienta_menu.Append(wx.NewId(), "Scienta HDF5 Map (.h5)")
+    window.Bind(wx.EVT_MENU, lambda event: import_h5_scienta_file(window), import_scienta_h5_item)
     import_menu.AppendSubMenu(scienta_menu, "Scienta Omicron")
 
     # MRS submenu

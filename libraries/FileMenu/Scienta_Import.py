@@ -20,6 +20,13 @@ import numpy as np
 import wx
 import json
 import openpyxl
+
+try:
+    import h5py
+    HAS_H5PY = True
+except ImportError:
+    HAS_H5PY = False
+
 import matplotlib
 matplotlib.use('WXAgg')
 import matplotlib.pyplot as plt
@@ -303,6 +310,44 @@ class ScientaMapPreviewWindow(wx.Frame):
         main_panel = wx.Panel(self)
         main_sizer = wx.BoxSizer(wx.VERTICAL)
 
+        # --- Region name editor panel ---
+        name_panel = wx.Panel(main_panel)
+        name_sizer = wx.BoxSizer(wx.HORIZONTAL)
+
+        name_label = wx.StaticText(name_panel, label="Names:")
+        name_label.SetFont(wx.Font(8, wx.FONTFAMILY_DEFAULT,
+                                   wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        name_sizer.Add(name_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT | wx.RIGHT, 6)
+
+        self.name_fields = []
+        for region in self.regions:
+            proposed, _ = clean_region_name(region['name'])
+            if not proposed:
+                proposed = region['name']
+            col_sizer = wx.BoxSizer(wx.VERTICAL)
+            # Grey label showing original name
+            orig_lbl = wx.StaticText(name_panel, label=region['name'],
+                                     style=wx.ST_ELLIPSIZE_END)
+            orig_lbl.SetForegroundColour(wx.Colour(130, 130, 130))
+            orig_lbl.SetFont(wx.Font(7, wx.FONTFAMILY_DEFAULT,
+                                     wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL))
+            # Editable proposed name
+            tf = wx.TextCtrl(name_panel, value=proposed, size=(78, -1))
+            tf.SetToolTip(f"Original name: {region['name']}\n"
+                          f"Proposed: {proposed}\n"
+                          f"Edit to change the sheet name used on import.")
+            col_sizer.Add(orig_lbl, 0, wx.EXPAND | wx.BOTTOM, 1)
+            col_sizer.Add(tf, 0, wx.EXPAND)
+            name_sizer.Add(col_sizer, 0, wx.ALL, 3)
+            self.name_fields.append(tf)
+
+        name_panel.SetSizer(name_sizer)
+        main_sizer.Add(name_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 4)
+
+        # Thin separator line
+        sep = wx.StaticLine(main_panel)
+        main_sizer.Add(sep, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
+
         # Control panel at top (fixed)
         control_panel = wx.Panel(main_panel)
         control_sizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -529,6 +574,12 @@ class ScientaMapPreviewWindow(wx.Frame):
         num_bins = self.bin_spin.GetValue()
         save_maps = self.save_maps_checkbox.GetValue()
 
+        # Apply user-edited names
+        for i, (region, tf) in enumerate(zip(self.regions, self.name_fields)):
+            new_name = tf.GetValue().strip()
+            if new_name:
+                region['name'] = new_name
+
         binned_data = {
             'file_path': self.parsed_data['file_path'],
             'regions': [],
@@ -599,6 +650,12 @@ class ScientaMapPreviewWindow(wx.Frame):
     def on_sum_sweeps(self, event):
         """Sum all remaining sweeps and trigger import."""
         save_maps = self.save_maps_checkbox.GetValue()
+
+        # Apply user-edited names
+        for i, (region, tf) in enumerate(zip(self.regions, self.name_fields)):
+            new_name = tf.GetValue().strip()
+            if new_name:
+                region['name'] = new_name
 
         summed_data = {
             'file_path': self.parsed_data['file_path'],
@@ -1141,3 +1198,274 @@ def add_map_to_data(Data, region, map_sheet_name, core_level_name=None):
 
     Data['Core levels'][map_sheet_name] = map_data
     Data['Number of Core levels'] = len(Data['Core levels'])
+
+
+def parse_h5_scienta_file(file_path):
+    """
+    Parse a Scienta Omicron HDF5 (.h5) file.
+
+    Returns a dict compatible with the existing Scienta map/import pipeline:
+        {
+            'file_path': str,
+            'name': str,               # spectrum name from file
+            'element_set': str,        # element set / region label
+            'source_energy': float,    # photon energy (eV)
+            'pass_energy': float,
+            'work_function': float,
+            'lens_mode': str,
+            'acq_mode': str,           # 'Image' etc.
+            'energy_mode': str,        # 'Kinetic' or 'Binding'
+            'dwell_time': float,
+            'acq_time': float,
+            'start_time': str,
+            'stop_time': str,
+            'instrument_model': str,
+            'be_values': np.ndarray,   # shape (n_energy,) — always BE
+            'ke_values': np.ndarray,   # shape (n_energy,)
+            'y_axis': np.ndarray,      # shape (n_y,) spatial / angle / etch
+            'y_label': str,
+            'y_unit': str,
+            'data_2d': np.ndarray,     # shape (n_y, n_energy) — intensities
+            'data_1d': np.ndarray,     # shape (n_energy,)     — reduced sum
+            'is_map': True,
+        }
+    """
+    if not HAS_H5PY:
+        raise ImportError("h5py is required to import HDF5 files.\n"
+                          "Install it with:  pip install h5py")
+
+    with h5py.File(file_path, 'r') as f:
+
+        def _str(ds):
+            v = ds[()]
+            if isinstance(v, bytes):
+                return v.decode('utf-8', errors='replace')
+            return str(v)
+
+        def _float(ds):
+            return float(ds[()])
+
+        def _int(ds):
+            return int(ds[()])
+
+        # --- spectrum_definition ---
+        sd = f['acquisition/spectrum_definition']
+        acq_mode    = _str(sd['acquisition_mode'])
+        energy_mode = _str(sd['energy_mode'])
+        lens_mode   = _str(sd['lens_mode_name'])
+        pass_energy = _float(sd['pass_energy'])
+        dwell_time  = _float(sd['dwell_time'])
+        acq_time    = _float(sd['acquisition_time'])
+        element_set = _str(sd['element_set_name'])
+
+        # --- spectrum_log ---
+        sl = f['acquisition/spectrum_log']
+        start_time = _str(sl['start_time'])
+        stop_time  = _str(sl['stop_time'])
+
+        # --- spectrum ---
+        sp = f['acquisition/spectrum']
+        name = _str(sp['name'])
+
+        # --- instrument ---
+        src = f['instrument/analyser/excitation_source']
+        source_energy = _float(src['energy'])
+
+        analyser = f['instrument/analyser']
+        work_function = _float(analyser['work_function'])
+        instrument_model = _str(analyser['model'])
+
+        # --- 2D data ---
+        data_grp = f['acquisition/spectrum/data']
+        data_2d_raw = data_grp['data'][()]           # shape (n_y, n_energy)
+        x_axis_raw  = data_grp['x_axis'][()]         # Analyser Energy or KE, shape (n_energy,)
+        y_axis      = data_grp['y_axis'][()]         # spatial / angle, shape (n_y,)
+        y_label     = data_grp['y_axis'].attrs.get('label', b'Y').decode() \
+                      if isinstance(data_grp['y_axis'].attrs.get('label', b'Y'), bytes) \
+                      else str(data_grp['y_axis'].attrs.get('label', 'Y'))
+        y_unit      = data_grp['y_axis'].attrs.get('units', b'').decode() \
+                      if isinstance(data_grp['y_axis'].attrs.get('units', b''), bytes) \
+                      else str(data_grp['y_axis'].attrs.get('units', ''))
+
+        # --- 1D reduced ---
+        red_grp = f['acquisition/spectrum/data_reduced_1d']
+        data_1d_raw   = red_grp['data'][()]          # shape (n_energy,)
+        # x_axis for 1d is always Kinetic Energy
+        ke_1d         = red_grp['x_axis'][()]
+
+    # Convert KE → BE: BE = hν − KE
+    # x_axis_raw may be labelled 'Analyser Energy' which equals KE here
+    ke_values = np.array(x_axis_raw, dtype=float)
+    be_values = source_energy - ke_values            # descending if KE ascending
+
+    # Flip so BE is in descending order (high → low, standard XPS convention)
+    if be_values[0] < be_values[-1]:
+        be_values = be_values[::-1]
+        ke_values = ke_values[::-1]
+        data_2d_raw = data_2d_raw[:, ::-1]
+        data_1d_raw = data_1d_raw[::-1]
+
+    return {
+        'file_path':        file_path,
+        'name':             name,
+        'element_set':      element_set,
+        'source_energy':    round(source_energy, 4),
+        'pass_energy':      round(pass_energy, 2),
+        'work_function':    round(work_function, 4),
+        'lens_mode':        lens_mode,
+        'acq_mode':         acq_mode,
+        'energy_mode':      energy_mode,
+        'dwell_time':       dwell_time,
+        'acq_time':         acq_time,
+        'start_time':       start_time,
+        'stop_time':        stop_time,
+        'instrument_model': instrument_model,
+        'be_values':        be_values,
+        'ke_values':        ke_values,
+        'y_axis':           y_axis,
+        'y_label':          y_label,
+        'y_unit':           y_unit,
+        'data_2d':          np.array(data_2d_raw, dtype=float),  # (n_y, n_energy)
+        'data_1d':          np.array(data_1d_raw, dtype=float),  # (n_energy,)
+        'is_map':           True,
+    }
+
+
+def import_h5_scienta_file(window, file_path=None):
+    """
+    Import a Scienta Omicron HDF5 (.h5) spatial map file.
+
+    Parses the file, reshapes data into the ScientaMapPreviewWindow format,
+    then opens the preview window so the user can drop sweeps, bin, or sum
+    before finalising the import via finalize_scienta_import.
+
+    The 'sweeps' axis corresponds to Y positions (spatial / angle / etch).
+    """
+    if not HAS_H5PY:
+        wx.MessageBox(
+            "The 'h5py' library is required to import HDF5 files.\n\n"
+            "Install it with:\n  pip install h5py",
+            "Missing Library", wx.OK | wx.ICON_ERROR)
+        return
+
+    if file_path is None:
+        with wx.FileDialog(
+                window, "Open Scienta HDF5 file",
+                wildcard="HDF5 files (*.h5;*.hdf5)|*.h5;*.hdf5|All files (*.*)|*.*",
+                style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as dlg:
+            if dlg.ShowModal() == wx.ID_CANCEL:
+                return
+            file_path = dlg.GetPath()
+
+    parent_pos  = window.GetPosition()
+    parent_size = window.GetSize()
+    console_frame = wx.Frame(window, title="Loading Scienta HDF5 File", size=(440, 220))
+    console_frame.SetPosition((
+        parent_pos.x + (parent_size.width  - 440) // 2,
+        parent_pos.y + (parent_size.height - 220) // 2,
+    ))
+    console_text = wx.TextCtrl(console_frame, style=wx.TE_MULTILINE | wx.TE_READONLY)
+    console_frame.Show()
+
+    def update_console(msg):
+        console_text.AppendText(msg + '\n')
+        console_text.Update()
+        wx.SafeYield()
+
+    try:
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+
+        update_console(f"Opening: {os.path.basename(file_path)}")
+        h5data = parse_h5_scienta_file(file_path)
+
+        n_y      = h5data['data_2d'].shape[0]
+        n_energy = h5data['data_2d'].shape[1]
+
+        update_console(f"  Instrument:    {h5data['instrument_model']}")
+        update_console(f"  Element set:   {h5data['element_set']}")
+        update_console(f"  Source energy: {h5data['source_energy']:.3f} eV")
+        update_console(f"  BE range:      {h5data['be_values'][-1]:.3f} – {h5data['be_values'][0]:.3f} eV")
+        update_console(f"  Map size:      {n_y} {h5data['y_label']} positions × {n_energy} energy points")
+
+        # Derive a clean core-level / region name from the element set
+        core_level, _ = clean_region_name(h5data['element_set'])
+        if not core_level:
+            core_level = base_name
+
+        # Build metadata dict matching the Scienta .txt metadata keys
+        source_label = (
+            'He I (UPS)'  if abs(h5data['source_energy'] - 21.218) < 0.05 else
+            'He II (UPS)' if abs(h5data['source_energy'] - 40.814) < 0.05 else
+            'Al K-alpha'  if abs(h5data['source_energy'] - 1486.68) < 0.1  else
+            'Mg K-alpha'  if abs(h5data['source_energy'] - 1253.6)  < 0.1  else
+            f"Photon {h5data['source_energy']:.3f} eV"
+        )
+
+        metadata = {
+            'Sample':           h5data['element_set'],
+            'Spectrum Name':    h5data['name'],
+            'Instrument':       h5data['instrument_model'],
+            'Location':         '',
+            'User':             '',
+            'Date':             h5data['start_time'][:10] if h5data['start_time'] else '',
+            'Time':             h5data['start_time'][11:] if len(h5data['start_time']) > 10 else '',
+            'Technique':        'UPS' if h5data['source_energy'] < 100 else 'XPS',
+            'Excitation Energy': f"{h5data['source_energy']:.3f}",
+            'Source Label':     source_label,
+            'Pass Energy':      f"{h5data['pass_energy']:.2f}",
+            'Work Function':    f"{h5data['work_function']:.4f}",
+            'Lens Mode':        h5data['lens_mode'],
+            'Acquisition Mode': h5data['acq_mode'],
+            'Energy Mode':      h5data['energy_mode'],
+            'Energy Scale':     'Binding',
+            'Energy Step':      f"{abs(float(h5data['be_values'][1]) - float(h5data['be_values'][0])):.4f}",
+            'Step Time':        f"{h5data['dwell_time']:.4f}",
+            'Start Time':       h5data['start_time'],
+            'Stop Time':        h5data['stop_time'],
+            'Y Axis Label':     h5data['y_label'],
+            'Y Axis Unit':      h5data['y_unit'],
+            'Y Axis Start':     f"{h5data['y_axis'][0]:.4f}",
+            'Y Axis End':       f"{h5data['y_axis'][-1]:.4f}",
+            'Y Axis Points':    str(n_y),
+        }
+
+        # Build sweep_scale array (Y-axis values, used as sweep labels)
+        sweep_scale = np.arange(n_y)
+
+        # Build the single region dict that ScientaMapPreviewWindow expects
+        # data_2d shape must be (sweeps, n_be) = (n_y, n_energy) — already correct
+        region = {
+            'name':        core_level,
+            'be_values':   h5data['be_values'],         # shape (n_energy,)
+            'sweeps':      n_y,
+            'sweep_scale': sweep_scale,
+            'data_2d':     h5data['data_2d'],           # shape (n_y, n_energy)
+            'intensities': None,
+            'metadata':    metadata,
+            'dropped_sweeps': [],
+        }
+
+        # parsed_data dict matching what ScientaMapPreviewWindow and
+        # finalize_scienta_import expect
+        parsed_data = {
+            'num_regions': 1,
+            'version':     'HDF5',
+            'regions':     [region],
+            'file_path':   file_path,
+            'is_map':      True,
+        }
+
+        update_console("\nOpening preview window...")
+        console_frame.Close()
+
+        def on_import_complete(data):
+            finalize_scienta_import(window, data)
+
+        ScientaMapPreviewWindow(window, parsed_data, on_import_complete)
+
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        update_console(f"\nError: {exc}")
+        wx.CallLater(3000, console_frame.Close)
+        wx.MessageBox(f"Error loading HDF5 file:\n\n{exc}", "Error", wx.OK | wx.ICON_ERROR)

@@ -203,6 +203,10 @@ class ExcelDropTarget(wx.FileDropTarget):
             from libraries.FileMenu.VGD_Import import import_vgd_file
             wx.CallAfter(import_vgd_file, self.window, file, False)
             return True
+        elif file.lower().endswith(('.h5', '.hdf5')):
+            from libraries.FileMenu.Scienta_Import import import_h5_scienta_file
+            wx.CallAfter(import_h5_scienta_file, self.window, file)
+            return True
         return False
 
     def _is_numeric(self, value):
