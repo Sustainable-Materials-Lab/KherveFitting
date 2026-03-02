@@ -22,7 +22,7 @@ from libraries.FileMenu.SPE_Import import open_spe_file, open_spe_file_dialog
 
 from libraries.FileMenu.VGD_Import import import_vgd_file, import_multiple_vgd_files
 from libraries.FileMenu.AVG_Import import open_avg_file, open_avg_file_direct, import_multiple_avg_files
-
+from libraries.FileMenu.XAS_Import import import_xas_file, import_multiple_xas_files
 
 class ExcelDropTarget(wx.FileDropTarget):
     def __init__(self, window):
@@ -34,10 +34,10 @@ class ExcelDropTarget(wx.FileDropTarget):
         # Check all files are valid first
         for file in filenames:
             if not any(file.lower().endswith(ext) for ext in ['.xlsx', '.xls', '.vms', '.kal',
-                                                              '.avg', '.spe', '.mrs', '.1', '.asc', '.vgd']):
+                                                              '.avg', '.spe', '.mrs', '.1', '.asc', '.vgd', '.sdp']):
                 wx.MessageBox(f"Only .xlsx/.xls (Khervefitting or Avantage), .vms (Vamas), "
                               f".kal (Kratos), .avg (Thermo), .mrs, .1 (VG-Microtech), .asc, .spe "
-                              f"(Phi) and .vgd (Thermo VGD) files can be dropped.", "Invalid File Type",
+                              f"(Phi), .vgd (Thermo VGD) and .sdp (SDP) files can be dropped.", "Invalid File Type",
                               wx.OK | wx.ICON_ERROR)
                 return False
 
@@ -203,6 +203,21 @@ class ExcelDropTarget(wx.FileDropTarget):
             from libraries.FileMenu.VGD_Import import import_vgd_file
             wx.CallAfter(import_vgd_file, self.window, file, False)
             return True
+        elif file.lower().endswith('.sdp'):
+            from libraries.FileMenu.SDP_Import import import_sdp_file
+            dlg = wx.MessageDialog(
+                self.window,
+                "This file is the property of Spectral Data Processor (SDP).\n"
+                "You should use the SDP software to view/edit this file.\n\n"
+                "I can attempt to import it, but I cannot promise that the data is correct.\n\n"
+                "Do you want to proceed with the import?",
+                "SDP File - Third-Party Format Notice",
+                wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING
+            )
+            if dlg.ShowModal() == wx.ID_YES:
+                wx.CallAfter(import_sdp_file, self.window, file, False)
+            dlg.Destroy()
+            return True
         elif file.lower().endswith(('.h5', '.hdf5')):
             from libraries.FileMenu.Scienta_Import import import_h5_scienta_file
             wx.CallAfter(import_h5_scienta_file, self.window, file)
@@ -237,7 +252,8 @@ class ExcelDropTarget(wx.FileDropTarget):
             'mrs': [],
             'vg': [],
             'vgd': [],
-            'asc': []
+            'asc': [],
+            'sdp': []
         }
 
         # Categorize files
@@ -4422,284 +4438,6 @@ def import_multiple_raman_files(window):
         window.show_popup_message2("Error", f"Error processing files: {str(e)}")
 
 
-def import_diamond_b07_xas_file(window):
-    """Import single Diamond-B07-XAS .txt or .dat file"""
-    import wx
-
-    with wx.FileDialog(window, "Open Diamond-B07-XAS file",
-                       wildcard="Data files (*.txt;*.dat)|*.txt;*.dat|Text files (*.txt)|*.txt|DAT files (*.dat)|*.dat",
-                       style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as fileDialog:
-        if fileDialog.ShowModal() == wx.ID_CANCEL:
-            return
-        file_path = fileDialog.GetPath()
-
-    import_diamond_b07_xas_file_direct(window, file_path, ask_edge=True)
-
-
-def import_diamond_b07_xas_file_direct(window, file_path, ask_edge=False, edge_name=None):
-    """Import Diamond-B07-XAS .txt or .dat file directly"""
-    import os
-    import openpyxl
-    import wx
-    import re
-
-    try:
-        base_filename = os.path.basename(file_path).split('.')[0]
-
-        # Ask for edge information if this is a single file import and edge not provided
-        if ask_edge and edge_name is None:
-            dlg = wx.TextEntryDialog(
-                window,
-                "Enter the transition edge (e.g., Co-L, Fe-K, O-K):",
-                "XAS Edge Information",
-                "Co-L"
-            )
-
-            if dlg.ShowModal() == wx.ID_OK:
-                edge_name = dlg.GetValue().strip()
-            else:
-                dlg.Destroy()
-                return
-            dlg.Destroy()
-
-        # Create sheet name with XAS~ prefix
-        if edge_name:
-            sheet_name = f"XAS~{edge_name}~"
-        else:
-            sheet_name = f"XAS~"
-
-        # Read data from txt/dat file
-        data = []
-        with open(file_path, 'r') as f:
-            lines = f.readlines()
-
-            # Skip header line
-            for line in lines[1:]:
-                if line.strip():
-                    parts = line.strip().split('\t')
-                    if len(parts) >= 4:
-                        try:
-                            photon_energy = float(parts[0])
-                            intensity_raw = float(parts[3])
-
-                            # Transform intensity: x(-1) x(1E11) x(100)
-                            intensity = intensity_raw * (-1) * 1e11 * 100000
-
-                            data.append([photon_energy, intensity])
-                        except ValueError:
-                            continue
-
-        if not data:
-            window.show_popup_message2("Error", "No valid data found in the file.")
-            return
-
-        # Create or load Excel file
-        output_dir = os.path.dirname(file_path)
-        excel_path = os.path.join(output_dir, f"{base_filename}.xlsx")
-
-        if os.path.exists(excel_path):
-            wb = openpyxl.load_workbook(excel_path)
-        else:
-            wb = openpyxl.Workbook()
-            if "Sheet" in wb.sheetnames:
-                wb.remove(wb["Sheet"])
-
-        # Check if sheet exists and handle duplicates
-        if sheet_name in wb.sheetnames:
-            wb.remove(wb[sheet_name])
-        ws = wb.create_sheet(sheet_name)
-
-        # Add headers
-        ws["A1"] = "BE"
-        ws["B1"] = "Raw Data"
-
-        # Add experimental description metadata in column AX
-        ws["AX1"] = "Technique"
-        ws["AX2"] = "XAS"
-
-        # Add data with .2f formatting
-        for i, (photon_energy, intensity) in enumerate(data, start=2):
-            ws[f"A{i}"] = float(f"{photon_energy:.2f}")
-            ws[f"B{i}"] = float(f"{intensity:.2f}")
-
-        wb.save(excel_path)
-        open_xlsx_file(window, excel_path)
-
-        # Update SampleNames in window.Data after file is loaded
-        if hasattr(window, 'Data') and 'Core levels' in window.Data:
-            if sheet_name in window.Data['Core levels']:
-                # Find the row index for this sheet
-                match = re.match(r'[A-Za-z0-9~-]+?(\d*)$', sheet_name)
-                row_index = "0"
-                if match:
-                    index_str = match.group(1)
-                    if index_str:
-                        row_index = index_str
-
-                # Initialize SampleNames if it doesn't exist
-                if 'SampleNames' not in window.Data:
-                    window.Data['SampleNames'] = {}
-
-                # Remove _NEXAFS suffix if present
-                sample_name = base_filename
-                if sample_name.endswith('_NEXAFS'):
-                    sample_name = sample_name[:-8]
-
-                # Set the sample name to the base filename
-                window.Data['SampleNames'][row_index] = sample_name
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        window.show_popup_message2("Error", f"Error processing file: {str(e)}")
-
-
-def import_multiple_diamond_b07_xas_files(window):
-    """Import multiple Diamond-B07-XAS .txt or .dat files from a folder"""
-    import wx
-    import os
-    import openpyxl
-    import re
-
-    with wx.DirDialog(window, "Select folder containing Diamond-B07-XAS .txt/.dat files") as dirDialog:
-        if dirDialog.ShowModal() == wx.ID_CANCEL:
-            return
-        dir_path = dirDialog.GetPath()
-
-    try:
-        # Get all txt and dat files in directory
-        data_files = [f for f in os.listdir(dir_path) if f.lower().endswith(('.txt', '.dat'))]
-
-        if not data_files:
-            window.show_popup_message2("Information", "No .txt or .dat files found in the selected folder.")
-            return
-
-        # Ask for edge information once for all files
-        edge_name = ""
-        dlg = wx.TextEntryDialog(
-            window,
-            "Enter the transition edge for all files (e.g., Co-L, Fe-K, O-K):",
-            "XAS Edge Information",
-            "Co-L"
-        )
-
-        if dlg.ShowModal() == wx.ID_OK:
-            edge_name = dlg.GetValue().strip()
-        else:
-            dlg.Destroy()
-            return
-        dlg.Destroy()
-
-        # Create single Excel file
-        excel_path = os.path.join(dir_path, "Diamond_B07_XAS_Data.xlsx")
-        wb = openpyxl.Workbook()
-
-        if "Sheet" in wb.sheetnames:
-            wb.remove(wb["Sheet"])
-
-        processed_count = 0
-        sample_names_map = {}
-
-        # # Find the next available row number for sheet naming
-        # # Check existing sheets in window.Data if available
-        # max_row_index = -1
-        # if hasattr(window, 'Data') and 'Core levels' in window.Data:
-        #     for existing_sheet in window.Data['Core levels'].keys():
-        #         match = re.match(r'[A-Za-z0-9~-]+?(\d+)$', existing_sheet)
-        #         if match:
-        #             index = int(match.group(1))
-        #             max_row_index = max(max_row_index, index)
-
-        # Start row number at -1 (will increment to 0 for first file)
-        row_number = -1
-
-        # row_number = max_row_index
-
-        for data_file in data_files:
-            file_path = os.path.join(dir_path, data_file)
-            base_filename = os.path.splitext(data_file)[0]
-
-            # Increment row number for each file
-            row_number += 1
-
-            # Create sheet name with XAS~ prefix and row number
-            if edge_name:
-                sheet_name = f"XAS~{edge_name}~{row_number}"
-            else:
-                sheet_name = f"XAS~{row_number}"
-
-            # Read data from txt/dat file
-            data = []
-            with open(file_path, 'r') as f:
-                lines = f.readlines()
-
-                # Skip header line
-                for line in lines[1:]:
-                    if line.strip():
-                        parts = line.strip().split('\t')
-                        if len(parts) >= 4:
-                            try:
-                                photon_energy = float(parts[0])
-                                intensity_raw = float(parts[3])
-
-                                # Transform intensity: x(-1) x(1E11) x(100)
-                                intensity = intensity_raw * (-1) * 1e11 * 100000
-
-                                data.append([photon_energy, intensity])
-                            except ValueError:
-                                continue
-
-            if not data:
-                row_number -= 1  # Don't increment if no data
-                continue
-
-            # Create sheet
-            ws = wb.create_sheet(sheet_name)
-
-            # Add headers
-            ws["A1"] = "BE"
-            ws["B1"] = "Raw Data"
-
-            # Add experimental description metadata
-            ws["AX1"] = "Technique"
-            ws["AX2"] = "XAS"
-
-            # Add data with .2f formatting
-            for i, (photon_energy, intensity) in enumerate(data, start=2):
-                ws[f"A{i}"] = float(f"{photon_energy:.2f}")
-                ws[f"B{i}"] = float(f"{intensity:.2f}")
-
-            # Remove _NEXAFS suffix if present
-            sample_name = base_filename
-            if sample_name.endswith('_NEXAFS'):
-                sample_name = sample_name[:-8]
-
-            # Map row number to sample name (base filename)
-            sample_names_map[str(row_number)] = sample_name
-            processed_count += 1
-
-        # Save Excel file if sheets were created
-        if len(wb.sheetnames) > 0:
-            wb.save(excel_path)
-            open_xlsx_file(window, excel_path)
-
-            # Update SampleNames in window.Data after file is loaded
-            if hasattr(window, 'Data'):
-                if 'SampleNames' not in window.Data:
-                    window.Data['SampleNames'] = {}
-
-                # Update all the sample names
-                for row_idx, sample_name in sample_names_map.items():
-                    window.Data['SampleNames'][row_idx] = sample_name
-
-            window.show_popup_message2("Success", f"Created Excel file with {processed_count} Diamond-B07-XAS data sheets.")
-        else:
-            window.show_popup_message2("Information", "No valid data found in any of the files.")
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        window.show_popup_message2("Error", f"Error processing files: {str(e)}")
 
 def import_xps_asc_file(window):
     import wx
@@ -5490,25 +5228,6 @@ def import_multiple_kfitting_files(window):
         # Sort files alphabetically
         excel_files.sort()
 
-        # # Create single combined workbook
-        # combined_file_path = os.path.join(folder_path, "Combined_KherveFitting_Files.xlsx")
-        # combined_wb = openpyxl.Workbook()
-        # combined_wb.remove(combined_wb.active)
-        #
-        # # Store sample names as dictionary for JSON
-        # sample_names_dict = {}
-        #
-        # # Process each file as a separate sample
-        # for sample_idx, excel_file in enumerate(excel_files):
-        #     file_path = os.path.join(folder_path, excel_file)
-        #
-        #     # Remove file extension for cleaner sample names
-        #     sample_name = os.path.splitext(excel_file)[0]
-        #     sample_names_dict[str(sample_idx)] = sample_name
-        #
-        #     # Load the workbook
-        #     wb = openpyxl.load_workbook(file_path)
-        #     process_kfitting_file_with_sample_number(wb, combined_wb, sample_idx)
 
         # Create single combined workbook
         combined_file_path = os.path.join(folder_path, "Combined_KherveFitting_Files.xlsx")
@@ -5798,34 +5517,6 @@ def analyze_excel_sheets(wb):
             'sample_data': [],
             'is_xas': sheet_name.startswith('XAS_')
         }
-
-        # # Check if first row has headers or numeric data
-        # cell1_row1 = sheet.cell(row=1, column=1).value
-        # cell2_row1 = sheet.cell(row=1, column=2).value
-        #
-        # # If first row is numeric, data starts at row 1 (no headers)
-        # if is_numeric(cell1_row1) and is_numeric(cell2_row1):
-        #     info['data_start_row'] = 1
-        #     info['has_headers'] = False
-        # else:
-        #     # Check if row 1 has text headers
-        #     if cell1_row1 and cell2_row1 and not is_numeric(cell1_row1):
-        #         info['has_headers'] = True
-        #         info['data_start_row'] = 2
-        #     else:
-        #         # Find first row with numeric data
-        #         for row_idx in range(1, min(50, sheet.max_row + 1)):
-        #             cell1 = sheet.cell(row=row_idx, column=1).value
-        #             cell2 = sheet.cell(row=row_idx, column=2).value
-        #
-        #             if is_numeric(cell1) and is_numeric(cell2):
-        #                 info['data_start_row'] = row_idx
-        #                 info['has_headers'] = row_idx > 1
-        #                 break
-
-        # # Always start at row 1 - no automatic detection
-        # info['data_start_row'] = 1
-        # info['has_headers'] = False
 
         # Count columns with data - increased limit for more columns
         if info['data_start_row'] <= sheet.max_row:
