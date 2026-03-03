@@ -1176,7 +1176,7 @@ def create_menu(window):
     paper_item = help_menu.Append(wx.NewId(), "KherveFitting Paper")
     window.Bind(wx.EVT_MENU, lambda event: webbrowser.open("http://doi.org/10.1002/sia.70032"), paper_item)
 
-    manual_item = help_menu.Append(wx.NewId(), "Open Full Manual [Still v1.5]\tCtrl+M")
+    manual_item = help_menu.Append(wx.NewId(), "Open Full Manual \tCtrl+M")
     window.Bind(wx.EVT_MENU, lambda event: open_manual(window), manual_item)
 
     yt_videos_item = help_menu.Append(wx.NewId(), "KherveFitting Videos")
