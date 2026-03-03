@@ -14,12 +14,75 @@ from datetime import datetime, timedelta
 GOOGLE_SHEETS_ID = '1mP23kwwg-H1Gx5ppp2YQNv6X1lYhJj2B6_PagQ0yABw'
 GOOGLE_SHEETS_CSV_URL = f'https://docs.google.com/spreadsheets/d/{GOOGLE_SHEETS_ID}/export?format=csv&gid=213903690'
 
-# Compressed monthly usage data - Update this before each release by running compile_monthly_usage.py
-# Format: 'YYYY_MM': {'Country': count, ...}
-MONTHLY_USAGE_DATA = {
-    # Run compile_monthly_usage.py to generate this dictionary
-    # Then copy-paste the output here
-}
+# Table sheet (gid=260297417) stores the MONTHLY_USAGE_DATA dictionary as plain
+# text. We fetch it once at startup; if the network is unavailable we fall back
+# to an empty dict so the rest of the app still works.
+GOOGLE_TABLE_GID = '260297417'
+GOOGLE_TABLE_CSV_URL = (
+    f'https://docs.google.com/spreadsheets/d/{GOOGLE_SHEETS_ID}'
+    f'/export?format=csv&gid={GOOGLE_TABLE_GID}'
+)
+
+
+def _load_monthly_data_from_sheet():
+    """Fetch MONTHLY_USAGE_DATA from the Table sheet and return it as a dict."""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                          'AppleWebKit/537.36 (KHTML, like Gecko) '
+                          'Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(GOOGLE_TABLE_CSV_URL, headers=headers, timeout=8)
+        if response.status_code != 200:
+            print(f"Table sheet: HTTP {response.status_code} – using empty monthly data")
+            return {}
+
+        # The sheet has one month per row in column A. Google Sheets strips
+        # the leading quote from the first cell, so row 2 arrives as:
+        #   2025_09': {'United Kingdom': 76, ...},
+        # We restore the missing quote, collect all rows, wrap in { } and
+        # parse with ast.literal_eval which handles Python dict syntax natively.
+        import ast
+        reader = csv.reader(io.StringIO(response.content.decode('utf-8')))
+        lines = []
+        for row in reader:
+            if not row:
+                continue
+            cell = row[0].strip()
+            if not cell or 'MONTHLY_USAGE_DATA' in cell:
+                continue
+            if cell in ('{', '}'):
+                continue
+            # Restore leading quote if Google Sheets stripped it
+            # A valid line should start with '2025_  (quote + 4-digit year)
+            if cell and cell[0].isdigit():
+                cell = "'" + cell
+            lines.append(cell)
+
+        if not lines:
+            print("Table sheet: empty – using empty monthly data")
+            return {}
+
+        # Wrap lines in braces to form a complete Python dict literal
+        combined = '{\n' + '\n'.join(lines) + '\n}'
+
+        # Remove trailing commas on the last entry before the closing brace
+        combined = combined.rstrip()
+        if combined.endswith(',\n}') or combined.endswith(',}'):
+            combined = combined[:combined.rfind(',')] + '\n}'
+
+        data = ast.literal_eval(combined)
+        print(f"Table sheet: loaded {len(data)} months of usage data")
+        return data
+
+    except Exception as exc:
+        print(f"Table sheet: error loading monthly data – {exc}")
+        return {}
+
+
+# Loaded once when the module is imported
+MONTHLY_USAGE_DATA = _load_monthly_data_from_sheet()
+
 
 
 class UsageStatsWindow(wx.Frame):
@@ -44,23 +107,24 @@ class UsageStatsWindow(wx.Frame):
 
         time_periods = [
             ("Since Sept 2024", self.plot_sept_2024),
-            ("Last Year", self.plot_last_year),
-            ("Last 6 Months", self.plot_last_6_months),
-            ("Last 3 Months", self.plot_last_3_months),
-            ("Last 2 Months", self.plot_last_2_months),
-            ("Last Month", self.plot_last_month),
-            ("Current Month", self.plot_current_month),
+            ("Monthly Trend", self.plot_monthly_trend),
             ("1 Month Ago", self.plot_1_month_ago),
             ("2 Months Ago", self.plot_2_months_ago),
             ("3 Months Ago", self.plot_3_months_ago),
-            ("Last 3 Weeks", self.plot_last_3_weeks),
-            ("Last 2 Weeks", self.plot_last_2_weeks),
-            ("Last Week", self.plot_last_week),
-            ("Last 4 Days", self.plot_last_4_days),
-            ("Last 3 Days", self.plot_last_3_days),
-            ("Last 2 Days", self.plot_last_2_days),
-            ("Yesterday", self.plot_yesterday),
+            ("4 Months Ago", self.plot_4_months_ago),
+            ("5 Months Ago", self.plot_5_months_ago),
+            ("6 Months Ago", self.plot_6_months_ago),
+            ("7 Months Ago", self.plot_7_months_ago),
+            ("1 Week Ago", self.plot_1_week_ago),
+            ("2 Weeks Ago", self.plot_2_weeks_ago),
+            ("3 Weeks Ago", self.plot_3_weeks_ago),
             ("Today", self.plot_today),
+            ("Yesterday", self.plot_yesterday),
+            ("2 Days Ago", self.plot_2_days_ago),
+            ("3 Days Ago", self.plot_3_days_ago),
+            ("4 Days Ago", self.plot_4_days_ago),
+            ("5 Days Ago", self.plot_5_days_ago),
+            ("6 Days Ago", self.plot_6_days_ago),
         ]
 
         for label, callback in time_periods:
@@ -152,15 +216,15 @@ class UsageStatsWindow(wx.Frame):
 
         return {}
 
-    def get_google_form_data(self, start_date=None, end_date=None):
-        """Fetch usage data from Google Form with optional date filtering
-        Uses compressed monthly data for complete months,
-        fetches live data only for the current incomplete month"""
+    def get_google_form_data(self, start_date=None, end_date=None, live_only=False):
+        """Fetch usage data from Google Form with optional date filtering.
+        live_only=True  → skip the monthly backup, query the live sheet directly (days/weeks).
+        live_only=False → use monthly backup for past complete months, live sheet for current month."""
 
         country_usage = {}
 
-        # If we have date filtering
-        if start_date and end_date:
+        # If we have date filtering and not live_only, pull from monthly backup first
+        if start_date and end_date and not live_only:
             now = datetime.now()
             current_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
@@ -331,6 +395,18 @@ class UsageStatsWindow(wx.Frame):
                 next_month = target_month.replace(month=target_month.month + 1)
             start_date = target_month
             end_date = next_month - timedelta(seconds=1)
+        elif period_type in ("4_months_ago", "5_months_ago", "6_months_ago", "7_months_ago"):
+            offset = int(period_type.split("_")[0])
+            m = now.month - offset
+            y = now.year + (m - 1) // 12
+            m = ((m - 1) % 12) + 1
+            target_month = now.replace(year=y, month=m, day=1, hour=0, minute=0, second=0, microsecond=0)
+            if target_month.month == 12:
+                next_month = target_month.replace(year=target_month.year + 1, month=1)
+            else:
+                next_month = target_month.replace(month=target_month.month + 1)
+            start_date = target_month
+            end_date = next_month - timedelta(seconds=1)
         elif period_type == "last_2_months":
             start_date = now - timedelta(days=60)
             end_date = now
@@ -346,6 +422,16 @@ class UsageStatsWindow(wx.Frame):
         elif period_type == "since_sept_2024":
             start_date = datetime(2024, 9, 1)
             end_date = now
+        elif period_type == "1_week_ago":
+            # The 7-day window that ended 7 days ago (i.e. days 14→7 before now)
+            end_date   = (now - timedelta(days=7)).replace(hour=23, minute=59, second=59, microsecond=999999)
+            start_date = (now - timedelta(days=14)).replace(hour=0, minute=0, second=0, microsecond=0)
+        elif period_type == "2_weeks_ago":
+            end_date   = (now - timedelta(days=14)).replace(hour=23, minute=59, second=59, microsecond=999999)
+            start_date = (now - timedelta(days=21)).replace(hour=0, minute=0, second=0, microsecond=0)
+        elif period_type == "3_weeks_ago":
+            end_date   = (now - timedelta(days=21)).replace(hour=23, minute=59, second=59, microsecond=999999)
+            start_date = (now - timedelta(days=28)).replace(hour=0, minute=0, second=0, microsecond=0)
         else:
             # Default: no date filtering
             start_date = None
@@ -379,7 +465,17 @@ class UsageStatsWindow(wx.Frame):
     def plot_world_map_bubbles(self, data):
         """Plot world map bubbles exactly like DownloadStats.py"""
         countries_data = data.get('countries', [])
+
+        # Recreate axes to fully reset any aspect/layout from previous plot
+        self.figure.clear()
+        self.ax = self.figure.add_subplot(111)
+        self.figure.subplots_adjust(top=0.98, bottom=0.08, left=0.08, right=0.95)
+
         if not countries_data:
+            self.ax.text(0.5, 0.5, 'No data available for this period',
+                         ha='center', va='center', fontsize=14,
+                         transform=self.ax.transAxes, color='gray')
+            self.canvas.draw()
             return
 
         # Create country usage dictionary
@@ -459,6 +555,40 @@ class UsageStatsWindow(wx.Frame):
             'Nepal': 'NP', 'NP': 'NP',
             'Iran': 'IR', 'IR': 'IR',
             'Iraq': 'IQ', 'IQ': 'IQ',
+            # Alternate / modern spellings from the data
+            'Türkiye': 'TR',
+            'The Netherlands': 'NL',
+            'Czechia': 'CZ',
+            'United Arab Emirates': 'AE',
+            'Serbia': 'RS',
+            'Ethiopia': 'ET',
+            'Kazakhstan': 'KZ',
+            'Croatia': 'HR',
+            'Latvia': 'LV',
+            'Estonia': 'EE',
+            'Lithuania': 'LT',
+            'Slovenia': 'SI',
+            'Mongolia': 'MN',
+            'Qatar': 'QA',
+            'Algeria': 'DZ',
+            'Portugal': 'PT',
+            'Austria': 'AT',
+            'Denmark': 'DK',
+            'Finland': 'FI',
+            'Norway': 'NO',
+            'Ireland': 'IE',
+            'Sweden': 'SE',
+            'Belgium': 'BE',
+            'Switzerland': 'CH',
+            'Colombia': 'CO',
+            'Chile': 'CL',
+            'Peru': 'PE',
+            'Afghanistan': 'AF',
+            'Uzbekistan': 'UZ',
+            'Guatemala': 'GT',
+            'Hungary': 'HU',
+            'New Zealand': 'NZ',
+            'Puerto Rico': 'PR',
         }
 
         # Country coordinates (same as DownloadStats.py)
@@ -533,6 +663,40 @@ class UsageStatsWindow(wx.Frame):
             'Nepal': (84, 28), 'NP': (84, 28),
             'Iran': (53, 32), 'IR': (53, 32),
             'Iraq': (44, 33), 'IQ': (44, 33),
+            # Alternate / modern spellings from the data
+            'Türkiye': (35, 39),
+            'The Netherlands': (5, 52),
+            'Czechia': (15, 50),
+            'United Arab Emirates': (53, 23),
+            'Serbia': (21, 44),
+            'Ethiopia': (40, 9),
+            'Kazakhstan': (67, 48),
+            'Croatia': (15, 45),
+            'Latvia': (25, 57),
+            'Estonia': (25, 59),
+            'Lithuania': (24, 55),
+            'Slovenia': (15, 46),
+            'Mongolia': (103, 46),
+            'Qatar': (51, 25),
+            'Algeria': (1, 28),
+            'Portugal': (-9, 39),
+            'Austria': (14, 48),
+            'Denmark': (9, 56),
+            'Finland': (26, 62),
+            'Norway': (8, 60),
+            'Ireland': (-8, 53),
+            'Sweden': (18, 60),
+            'Belgium': (4, 50),
+            'Switzerland': (8, 47),
+            'Colombia': (-74, 4),
+            'Chile': (-71, -30),
+            'Peru': (-76, -10),
+            'Afghanistan': (67, 33),
+            'Uzbekistan': (63, 41),
+            'Guatemala': (-90, 15),
+            'Hungary': (19, 47),
+            'New Zealand': (172, -41),
+            'Puerto Rico': (-66, 18),
         }
 
         # Prepare bubble data
@@ -618,8 +782,7 @@ class UsageStatsWindow(wx.Frame):
             if overlaps_resolved:
                 break
 
-        # Clear plot and create bubble chart
-        self.ax.clear()
+        # Create bubble chart
         self.ax.set_xlim(-130, 170)
         self.ax.set_ylim(-60, 130)
         self.ax.set_aspect('equal')
@@ -649,11 +812,11 @@ class UsageStatsWindow(wx.Frame):
                          alpha=0.6, style='italic')
 
         def calculate_font_size(radius, text_length):
-            base_size = max(6, min(16, int(radius * 1.2)))
+            base_size = max(5, min(10, int(radius * 0.7)))
             if text_length > 6:
-                base_size = max(6, int(base_size * 0.8))
+                base_size = max(5, int(base_size * 0.8))
             elif text_length > 4:
-                base_size = max(8, int(base_size * 0.9))
+                base_size = max(5, int(base_size * 0.9))
             return base_size
 
         def format_usage(usage_count):
@@ -678,7 +841,7 @@ class UsageStatsWindow(wx.Frame):
             text_color = 'white' if bubble['color_intensity'] > 0.5 else 'black'
 
             self.ax.text(bubble['x'], bubble['y'], display_text,
-                         ha='center', va='center', fontsize=font_size, fontweight='bold',
+                         ha='center', va='center', fontsize=font_size,
                          color=text_color,
                          bbox=dict(boxstyle='round,pad=0.1', facecolor='none', edgecolor='none', alpha=0.7))
 
@@ -712,6 +875,21 @@ class UsageStatsWindow(wx.Frame):
         self.canvas.draw()
 
     # Button callback methods with proper date filtering
+    def plot_1_week_ago(self, event):
+        start_date, end_date = self.get_date_range("1_week_ago")
+        data = self.get_google_form_data(start_date, end_date, live_only=True)
+        self.plot_world_map_bubbles(data)
+
+    def plot_2_weeks_ago(self, event):
+        start_date, end_date = self.get_date_range("2_weeks_ago")
+        data = self.get_google_form_data(start_date, end_date, live_only=True)
+        self.plot_world_map_bubbles(data)
+
+    def plot_3_weeks_ago(self, event):
+        start_date, end_date = self.get_date_range("3_weeks_ago")
+        data = self.get_google_form_data(start_date, end_date, live_only=True)
+        self.plot_world_map_bubbles(data)
+
     def plot_today(self, event):
         start_date, end_date = self.get_date_range("today")
         data = self.get_google_form_data(start_date, end_date)
@@ -722,13 +900,30 @@ class UsageStatsWindow(wx.Frame):
         data = self.get_google_form_data(start_date, end_date)
         self.plot_world_map_bubbles(data)
 
-    def plot_last_2_days(self, event):
-        start_date, end_date = self.get_date_range("last_2_days")
+    def plot_2_days_ago(self, event):
+        start_date, end_date = self.get_date_range("2_days_ago")
         data = self.get_google_form_data(start_date, end_date)
         self.plot_world_map_bubbles(data)
 
-    def plot_last_3_days(self, event):
-        start_date, end_date = self.get_date_range("last_3_days")
+    def plot_3_days_ago(self, event):
+        start_date, end_date = self.get_date_range("3_days_ago")
+        data = self.get_google_form_data(start_date, end_date)
+        self.plot_world_map_bubbles(data)
+
+    def plot_4_days_ago(self, event):
+        start_date, end_date = self.get_date_range("4_days_ago")
+        data = self.get_google_form_data(start_date, end_date)
+        self.plot_world_map_bubbles(data)
+
+    def plot_5_days_ago(self, event):
+        start_date, end_date = self.get_date_range("5_days_ago")
+        data = self.get_google_form_data(start_date, end_date)
+        self.plot_world_map_bubbles(data)
+
+    def plot_6_days_ago(self, event):
+        start_date, end_date = self.get_date_range("6_days_ago")
+        data = self.get_google_form_data(start_date, end_date)
+        self.plot_world_map_bubbles(data)
         data = self.get_google_form_data(start_date, end_date)
         self.plot_world_map_bubbles(data)
 
@@ -802,13 +997,74 @@ class UsageStatsWindow(wx.Frame):
         data = self.get_google_form_data(start_date, end_date)
         self.plot_world_map_bubbles(data)
 
+    def plot_4_months_ago(self, event):
+        start_date, end_date = self.get_date_range("4_months_ago")
+        data = self.get_google_form_data(start_date, end_date)
+        self.plot_world_map_bubbles(data)
+
+    def plot_5_months_ago(self, event):
+        start_date, end_date = self.get_date_range("5_months_ago")
+        data = self.get_google_form_data(start_date, end_date)
+        self.plot_world_map_bubbles(data)
+
+    def plot_6_months_ago(self, event):
+        start_date, end_date = self.get_date_range("6_months_ago")
+        data = self.get_google_form_data(start_date, end_date)
+        self.plot_world_map_bubbles(data)
+
+    def plot_7_months_ago(self, event):
+        start_date, end_date = self.get_date_range("7_months_ago")
+        data = self.get_google_form_data(start_date, end_date)
+        self.plot_world_map_bubbles(data)
+
+    def plot_monthly_trend(self, event):
+        """Line plot of total usage per month from MONTHLY_USAGE_DATA."""
+        # Remove the existing axes and create a fresh one to escape set_aspect('equal')
+        self.figure.clear()
+        self.ax = self.figure.add_subplot(111)
+        self.figure.subplots_adjust(top=0.93, bottom=0.20, left=0.12, right=0.95)
+
+        print(f"Monthly trend: MONTHLY_USAGE_DATA has {len(MONTHLY_USAGE_DATA)} entries: {list(MONTHLY_USAGE_DATA.keys())}")
+
+        if not MONTHLY_USAGE_DATA:
+            self.ax.text(0.5, 0.5, 'No monthly data available\n(Table sheet may not have loaded)',
+                         ha='center', va='center', fontsize=11,
+                         transform=self.ax.transAxes, color='gray')
+            self.canvas.draw()
+            return
+
+        # Aggregate total per month
+        months = sorted(MONTHLY_USAGE_DATA.keys())
+        totals = [sum(MONTHLY_USAGE_DATA[m].values()) for m in months]
+
+        # Format labels as "Sep 25", "Oct 25" etc.
+        labels = []
+        for m in months:
+            year, month = m.split('_')
+            dt = datetime(int(year), int(month), 1)
+            labels.append(dt.strftime('%b %y'))
+
+        x = list(range(len(months)))
+        self.ax.plot(x, totals, marker='o', color='steelblue', linewidth=2, markersize=6)
+
+        for xi, yi in zip(x, totals):
+            self.ax.annotate(str(yi), (xi, yi),
+                             textcoords='offset points', xytext=(0, 7),
+                             ha='center', fontsize=8)
+
+        self.ax.set_xticks(x)
+        self.ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=9)
+        self.ax.set_ylabel('Total Sessions', fontsize=10)
+        self.ax.set_title('Monthly Usage Since Sept 2025', fontsize=11)
+        self.ax.grid(True, alpha=0.3, linestyle='--')
+        self.ax.set_xlim(-0.5, len(months) - 0.5)
+        self.ax.set_ylim(0, max(totals) * 1.15)
+
+        self.canvas.draw()
+
     def plot_all_usage(self, event):
         data = self.get_google_form_data()  # No date filtering
         self.plot_world_map_bubbles(data)
-    #
-    # def plot_google_form(self, event):
-    #     data = self.get_google_form_data()  # No date filtering
-    #     self.plot_world_map_bubbles(data)
 
 
 def show_usage_stats_window(parent):
