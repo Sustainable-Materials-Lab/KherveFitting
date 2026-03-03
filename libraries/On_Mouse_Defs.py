@@ -1881,7 +1881,7 @@ class MouseEventHandler:
                 white_pink_item = edx_menu.Append(wx.ID_ANY, "White/Pink")
                 self.window.Bind(wx.EVT_MENU, lambda evt: self.set_edx_plot_style('white_pink'), white_pink_item)
 
-                edx_submenu = style_menu.AppendSubMenu(edx_menu, "EDX~Plot")
+                # edx_submenu = style_menu.AppendSubMenu(edx_menu, "EDX~Plot")
 
                 # # Enable only if current sheet is EDX~Plot
                 # edx_active = sheet_name == 'EDX~Plot' or sheet_name.startswith('EDX~Plot')
