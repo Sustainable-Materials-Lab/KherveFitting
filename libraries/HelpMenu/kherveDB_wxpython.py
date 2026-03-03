@@ -180,6 +180,10 @@ class PeriodicTableXPS(wx.Frame):
                                                         'Show element tiles without colours or extra info')
         self.simple_pt_item.Check(self.config.get('simplified_periodic_table', False))
         self.Bind(wx.EVT_MENU, self.on_toggle_simple_pt, self.simple_pt_item)
+        view_menu.AppendSeparator()
+        scholar_delay_item = view_menu.Append(wx.ID_ANY, '&Scholar Tab Load Delay...',
+                                              'Set how many seconds before Scholar tabs auto-load')
+        self.Bind(wx.EVT_MENU, self.on_set_scholar_delay, scholar_delay_item)
         menubar.Append(view_menu, '&View')
 
         # Help menu
@@ -228,6 +232,29 @@ class PeriodicTableXPS(wx.Frame):
         self.save_config()
         self.refresh_periodic_table()
 
+    def on_set_scholar_delay(self, event):
+        """Let the user choose how many seconds before Scholar tabs auto-load"""
+        current = self.config.get('scholar_load_delay_seconds', 60)
+        dlg = wx.NumberEntryDialog(
+            self,
+            message="Enter the delay in seconds before Scholar tabs automatically\n"
+                    "load Google Scholar after opening the dialog.\n\n"
+                    "Set to 0 to load immediately (original behaviour).",
+            prompt="Delay (seconds):",
+            caption="Scholar Tab Load Delay",
+            value=current,
+            min=0,
+            max=3600
+        )
+        if dlg.ShowModal() == wx.ID_OK:
+            self.config['scholar_load_delay_seconds'] = dlg.GetValue()
+            self.save_config()
+            self.status_text.SetLabel(
+                f"Scholar tab load delay set to {dlg.GetValue()} second(s). "
+                f"Takes effect next time the dialog is opened."
+            )
+        dlg.Destroy()
+
     def refresh_periodic_table(self):
         """Redraw all element tiles to reflect the current simplified/full mode"""
         simplified = self.config.get('simplified_periodic_table', False)
@@ -254,7 +281,7 @@ This application also provide rapid access to the website XPSfitting from M. Bie
 the webite of Thermo Knowledge.
 
 Developer: Gwilherm Kerherve
-Version: 2.0"""
+Version: 3.0"""
 
         wx.MessageBox(about_text, "About My KherveDB Library",
                       wx.OK | wx.ICON_INFORMATION)
@@ -1126,7 +1153,9 @@ Version: 2.0"""
             self.property_dialog = None
 
         # Create new properties dialog
-        self.property_dialog = ElementPropertiesDialog(self, self.selected_element, self.df)
+        scholar_delay = self.config.get('scholar_load_delay_seconds', 60)
+        self.property_dialog = ElementPropertiesDialog(self, self.selected_element, self.df,
+                                                        scholar_load_delay=scholar_delay)
 
         # Set position if we have a saved one
         if self.property_dialog_position:
@@ -1176,8 +1205,10 @@ Version: 2.0"""
             self.property_dialog.Raise()
             return
 
-        # Create new properties dialog
-        self.property_dialog = ElementPropertiesDialog(self, self.selected_element, self.df)
+        # Create new properties dialog (pass configurable Scholar tab load delay)
+        scholar_delay = self.config.get('scholar_load_delay_seconds', 60)
+        self.property_dialog = ElementPropertiesDialog(self, self.selected_element, self.df,
+                                                        scholar_load_delay=scholar_delay)
 
         # Position on right side of screen
         if not self.property_dialog_position:
@@ -1340,12 +1371,14 @@ class PlotFrame(wx.Frame):
 class ElementPropertiesDialog(wx.Dialog):
     """Dialog for showing element properties"""
 
-    def __init__(self, parent, element, df):
+    def __init__(self, parent, element, df, scholar_load_delay=60):
         super().__init__(parent, title=f"Other Databases & Properties for {element}",
                          size=(1000, 900), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.MAXIMIZE_BOX | wx.MINIMIZE_BOX)
 
         self.element = element
         self.df = df
+        # Delay (in seconds) before Scholar tabs auto-load their URLs (0 = load immediately)
+        self.scholar_load_delay = max(0, int(scholar_load_delay))
 
         # Get element properties
         self.properties = self.get_element_properties(self.element)
@@ -1743,14 +1776,23 @@ class ElementPropertiesDialog(wx.Dialog):
             toolbar_panel = wx.Panel(panel)
             toolbar_sizer = wx.BoxSizer(wx.HORIZONTAL)
 
-            refresh_btn = wx.Button(toolbar_panel, label="Refresh")
-            refresh_btn.Bind(wx.EVT_BUTTON, self.on_refresh_thermo)
+            back_btn = wx.Button(toolbar_panel, label="◄ Back")
+            back_btn.Bind(wx.EVT_BUTTON, self.on_thermo_back)
+
+            forward_btn = wx.Button(toolbar_panel, label="Forward ►")
+            forward_btn.Bind(wx.EVT_BUTTON, self.on_thermo_forward)
+
+            home_btn = wx.Button(toolbar_panel, label="Home")
+            home_btn.Bind(wx.EVT_BUTTON, self.on_thermo_home)
+
+            zoom_out_btn = wx.Button(toolbar_panel, label="-", size=(30, -1))
+            zoom_out_btn.Bind(wx.EVT_BUTTON, self.on_thermo_zoom_out)
 
             zoom_in_btn = wx.Button(toolbar_panel, label="+", size=(30, -1))
             zoom_in_btn.Bind(wx.EVT_BUTTON, self.on_thermo_zoom_in)
 
-            zoom_out_btn = wx.Button(toolbar_panel, label="-", size=(30, -1))
-            zoom_out_btn.Bind(wx.EVT_BUTTON, self.on_thermo_zoom_out)
+            refresh_btn = wx.Button(toolbar_panel, label="Refresh")
+            refresh_btn.Bind(wx.EVT_BUTTON, self.on_refresh_thermo)
 
             url_label = wx.StaticText(toolbar_panel, label="Thermo Fisher Knowledge Base")
             font = url_label.GetFont()
@@ -1758,6 +1800,9 @@ class ElementPropertiesDialog(wx.Dialog):
             url_label.SetFont(font)
 
             toolbar_sizer.Add(url_label, 1, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
+            toolbar_sizer.Add(back_btn, 0, wx.ALL, 2)
+            toolbar_sizer.Add(forward_btn, 0, wx.ALL, 2)
+            toolbar_sizer.Add(home_btn, 0, wx.ALL, 2)
             toolbar_sizer.Add(zoom_out_btn, 0, wx.ALL, 2)
             toolbar_sizer.Add(zoom_in_btn, 0, wx.ALL, 2)
             toolbar_sizer.Add(refresh_btn, 0, wx.ALL, 2)
@@ -1807,14 +1852,23 @@ class ElementPropertiesDialog(wx.Dialog):
             toolbar_panel = wx.Panel(panel)
             toolbar_sizer = wx.BoxSizer(wx.HORIZONTAL)
 
-            refresh_btn = wx.Button(toolbar_panel, label="Refresh")
-            refresh_btn.Bind(wx.EVT_BUTTON, self.on_refresh_harwell)
+            back_btn = wx.Button(toolbar_panel, label="◄ Back")
+            back_btn.Bind(wx.EVT_BUTTON, self.on_harwell_back)
+
+            forward_btn = wx.Button(toolbar_panel, label="Forward ►")
+            forward_btn.Bind(wx.EVT_BUTTON, self.on_harwell_forward)
+
+            home_btn = wx.Button(toolbar_panel, label="Home")
+            home_btn.Bind(wx.EVT_BUTTON, self.on_harwell_home)
+
+            zoom_out_btn = wx.Button(toolbar_panel, label="-", size=(30, -1))
+            zoom_out_btn.Bind(wx.EVT_BUTTON, self.on_harwell_zoom_out)
 
             zoom_in_btn = wx.Button(toolbar_panel, label="+", size=(30, -1))
             zoom_in_btn.Bind(wx.EVT_BUTTON, self.on_harwell_zoom_in)
 
-            zoom_out_btn = wx.Button(toolbar_panel, label="-", size=(30, -1))
-            zoom_out_btn.Bind(wx.EVT_BUTTON, self.on_harwell_zoom_out)
+            refresh_btn = wx.Button(toolbar_panel, label="Refresh")
+            refresh_btn.Bind(wx.EVT_BUTTON, self.on_refresh_harwell)
 
             url_label = wx.StaticText(toolbar_panel, label="Harwell XPS Guru")
             font = url_label.GetFont()
@@ -1822,6 +1876,9 @@ class ElementPropertiesDialog(wx.Dialog):
             url_label.SetFont(font)
 
             toolbar_sizer.Add(url_label, 1, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
+            toolbar_sizer.Add(back_btn, 0, wx.ALL, 2)
+            toolbar_sizer.Add(forward_btn, 0, wx.ALL, 2)
+            toolbar_sizer.Add(home_btn, 0, wx.ALL, 2)
             toolbar_sizer.Add(zoom_out_btn, 0, wx.ALL, 2)
             toolbar_sizer.Add(zoom_in_btn, 0, wx.ALL, 2)
             toolbar_sizer.Add(refresh_btn, 0, wx.ALL, 2)
@@ -1833,8 +1890,18 @@ class ElementPropertiesDialog(wx.Dialog):
             # Get the Harwell XPS URL for this element
             self.harwell_url = self.get_harwell_url(self.element)
 
-            # Load the webpage
-            self.harwell_web_view.LoadURL(self.harwell_url)
+            # Deferred loading: show placeholder for 10 seconds then auto-load
+            harwell_delay_ms = 10 * 1000
+            placeholder_html = (
+                "<html><body style='font-family:sans-serif; padding:40px; color:#555;'>"
+                "<h2>&#128336; Loading paused</h2>"
+                "<p>The <b>Harwell XPS Guru</b> tab will automatically load in "
+                "<b>10 seconds</b>.</p>"
+                "<p>Click <b>Refresh</b> to load it immediately.</p>"
+                "</body></html>"
+            )
+            self.harwell_web_view.SetPage(placeholder_html, "")
+            wx.CallLater(harwell_delay_ms, self._harwell_deferred_load)
 
             # Add loading indicator
             harwell_loading_text = wx.StaticText(panel, label="Loading Harwell XPS Guru page...")
@@ -1860,6 +1927,29 @@ class ElementPropertiesDialog(wx.Dialog):
 
         panel.SetSizer(sizer)
         notebook.AddPage(panel, "Harwell XPS Guru")
+
+    def on_harwell_back(self, event):
+        """Navigate back in Harwell web view"""
+        try:
+            if self.harwell_web_view.CanGoBack():
+                self.harwell_web_view.GoBack()
+        except:
+            pass
+
+    def on_harwell_forward(self, event):
+        """Navigate forward in Harwell web view"""
+        try:
+            if self.harwell_web_view.CanGoForward():
+                self.harwell_web_view.GoForward()
+        except:
+            pass
+
+    def on_harwell_home(self, event):
+        """Go to home page for Harwell XPS Guru"""
+        try:
+            self.harwell_web_view.LoadURL(self.harwell_url)
+        except:
+            pass
 
     def on_refresh_harwell(self, event):
         """Refresh the Harwell XPS page"""
@@ -1941,6 +2031,29 @@ class ElementPropertiesDialog(wx.Dialog):
         except:
             pass
 
+    def on_thermo_back(self, event):
+        """Navigate back in Thermo Knowledge web view"""
+        try:
+            if self.web_view.CanGoBack():
+                self.web_view.GoBack()
+        except:
+            pass
+
+    def on_thermo_forward(self, event):
+        """Navigate forward in Thermo Knowledge web view"""
+        try:
+            if self.web_view.CanGoForward():
+                self.web_view.GoForward()
+        except:
+            pass
+
+    def on_thermo_home(self, event):
+        """Go to home page for Thermo Knowledge"""
+        try:
+            self.web_view.LoadURL(self.thermo_url)
+        except:
+            pass
+
     def on_refresh_thermo(self, event):
         """Refresh the Thermo Fisher page"""
         try:
@@ -1961,14 +2074,23 @@ class ElementPropertiesDialog(wx.Dialog):
             toolbar_panel = wx.Panel(panel)
             toolbar_sizer = wx.BoxSizer(wx.HORIZONTAL)
 
-            refresh_btn = wx.Button(toolbar_panel, label="Refresh")
-            refresh_btn.Bind(wx.EVT_BUTTON, self.on_refresh_xps)
+            back_btn = wx.Button(toolbar_panel, label="◄ Back")
+            back_btn.Bind(wx.EVT_BUTTON, self.on_xps_back)
+
+            forward_btn = wx.Button(toolbar_panel, label="Forward ►")
+            forward_btn.Bind(wx.EVT_BUTTON, self.on_xps_forward)
+
+            home_btn = wx.Button(toolbar_panel, label="Home")
+            home_btn.Bind(wx.EVT_BUTTON, self.on_xps_home)
+
+            zoom_out_btn = wx.Button(toolbar_panel, label="-", size=(30, -1))
+            zoom_out_btn.Bind(wx.EVT_BUTTON, self.on_xps_zoom_out)
 
             zoom_in_btn = wx.Button(toolbar_panel, label="+", size=(30, -1))
             zoom_in_btn.Bind(wx.EVT_BUTTON, self.on_xps_zoom_in)
 
-            zoom_out_btn = wx.Button(toolbar_panel, label="-", size=(30, -1))
-            zoom_out_btn.Bind(wx.EVT_BUTTON, self.on_xps_zoom_out)
+            refresh_btn = wx.Button(toolbar_panel, label="Refresh")
+            refresh_btn.Bind(wx.EVT_BUTTON, self.on_refresh_xps)
 
             url_label = wx.StaticText(toolbar_panel, label="XPS Fitting Database")
             font = url_label.GetFont()
@@ -1976,6 +2098,9 @@ class ElementPropertiesDialog(wx.Dialog):
             url_label.SetFont(font)
 
             toolbar_sizer.Add(url_label, 1, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
+            toolbar_sizer.Add(back_btn, 0, wx.ALL, 2)
+            toolbar_sizer.Add(forward_btn, 0, wx.ALL, 2)
+            toolbar_sizer.Add(home_btn, 0, wx.ALL, 2)
             toolbar_sizer.Add(zoom_out_btn, 0, wx.ALL, 2)
             toolbar_sizer.Add(zoom_in_btn, 0, wx.ALL, 2)
             toolbar_sizer.Add(refresh_btn, 0, wx.ALL, 2)
@@ -2021,6 +2146,29 @@ class ElementPropertiesDialog(wx.Dialog):
             self.xps_loading_text.Show()
             self.xps_web_view.Reload()
             self.Layout()
+        except:
+            pass
+
+    def on_xps_back(self, event):
+        """Navigate back in XPS Fitting web view"""
+        try:
+            if self.xps_web_view.CanGoBack():
+                self.xps_web_view.GoBack()
+        except:
+            pass
+
+    def on_xps_forward(self, event):
+        """Navigate forward in XPS Fitting web view"""
+        try:
+            if self.xps_web_view.CanGoForward():
+                self.xps_web_view.GoForward()
+        except:
+            pass
+
+    def on_xps_home(self, event):
+        """Go to home page for XPS Fitting"""
+        try:
+            self.xps_web_view.LoadURL(self.xps_url)
         except:
             pass
 
@@ -4121,7 +4269,22 @@ class ElementPropertiesDialog(wx.Dialog):
 
             # Set home URL (Google Scholar search page)
             self.sss_home_url = "https://scholar.google.com/"
-            self.sss_web_view.LoadURL(self.sss_home_url)
+
+            # Deferred loading: show placeholder HTML until delay expires
+            delay_sec = self.scholar_load_delay
+            if delay_sec > 0:
+                placeholder_html = (
+                    f"<html><body style='font-family:sans-serif; padding:40px; color:#555;'>"
+                    f"<h2>&#128336; Loading paused</h2>"
+                    f"<p>The <b>SSS from Scholar</b> tab will automatically load Google Scholar "
+                    f"in <b>{delay_sec} second{'s' if delay_sec != 1 else ''}</b>.</p>"
+                    f"<p>You can also click <b>Home</b> or <b>Search</b> to load it immediately.</p>"
+                    f"</body></html>"
+                )
+                self.sss_web_view.SetPage(placeholder_html, "")
+                wx.CallLater(delay_sec * 1000, self._sss_deferred_load)
+            else:
+                self.sss_web_view.LoadURL(self.sss_home_url)
 
             # Add loading indicator
             sss_loading_text = wx.StaticText(panel, label="Ready to search Surface Science Spectra...")
@@ -4403,7 +4566,22 @@ class ElementPropertiesDialog(wx.Dialog):
 
             # Set home URL (Google Scholar search page)
             self.estr_home_url = "https://scholar.google.com/"
-            self.estr_web_view.LoadURL(self.estr_home_url)
+
+            # Deferred loading: show placeholder HTML until delay expires
+            delay_sec = self.scholar_load_delay
+            if delay_sec > 0:
+                placeholder_html = (
+                    f"<html><body style='font-family:sans-serif; padding:40px; color:#555;'>"
+                    f"<h2>&#128336; Loading paused</h2>"
+                    f"<p>The <b>Good paper Scholar</b> tab will automatically load Google Scholar "
+                    f"in <b>{delay_sec} second{'s' if delay_sec != 1 else ''}</b>.</p>"
+                    f"<p>You can also click <b>Home</b> or <b>Search</b> to load it immediately.</p>"
+                    f"</body></html>"
+                )
+                self.estr_web_view.SetPage(placeholder_html, "")
+                wx.CallLater(delay_sec * 1000, self._estr_deferred_load)
+            else:
+                self.estr_web_view.LoadURL(self.estr_home_url)
 
             # Add loading indicator
             estr_loading_text = wx.StaticText(panel, label="Ready to search electronic structure papers...")
@@ -4432,6 +4610,30 @@ class ElementPropertiesDialog(wx.Dialog):
 
         panel.SetSizer(sizer)
         notebook.AddPage(panel, "Good paper Scholar")
+
+    def _harwell_deferred_load(self):
+        """Called by wx.CallLater to load the Harwell XPS Guru tab after 10 seconds."""
+        try:
+            if hasattr(self, 'harwell_web_view') and self.harwell_web_view:
+                self.harwell_web_view.LoadURL(self.harwell_url)
+        except Exception:
+            pass
+
+    def _sss_deferred_load(self):
+        """Called by wx.CallLater to load the SSS Scholar tab after the configured delay."""
+        try:
+            if hasattr(self, 'sss_web_view') and self.sss_web_view:
+                self.sss_web_view.LoadURL(self.sss_home_url)
+        except Exception:
+            pass
+
+    def _estr_deferred_load(self):
+        """Called by wx.CallLater to load the Good paper Scholar tab after the configured delay."""
+        try:
+            if hasattr(self, 'estr_web_view') and self.estr_web_view:
+                self.estr_web_view.LoadURL(self.estr_home_url)
+        except Exception:
+            pass
 
     def on_estr_search(self, event):
         """Perform Electronic Structure search on Google Scholar"""
