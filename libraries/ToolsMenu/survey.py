@@ -229,95 +229,6 @@ class PeriodicTableWindow(wx.Frame):
             elements.add(elem)
         return elements
 
-    def InitUI_OLD(self):
-        panel = wx.Panel(self)
-
-        # Handle macOS dark mode
-        import platform
-        is_macos_dark = platform.system() == 'Darwin' and wx.SystemSettings.GetAppearance().IsDark()
-
-        if is_macos_dark:
-            panel.SetBackgroundColour(wx.Colour(45, 45, 45))
-        else:
-            panel.SetBackgroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE))
-
-        main_sizer = wx.BoxSizer(wx.VERTICAL)
-
-        # # Info text
-        # self.info_text1 = wx.StaticText(panel, style=wx.ALIGN_CENTER | wx.ST_NO_AUTORESIZE)
-        # self.info_text1.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        # main_sizer.Add(self.info_text1, 0, wx.EXPAND | wx.ALL, 0)
-        #
-        # self.info_text2 = wx.StaticText(panel, style=wx.ALIGN_CENTER | wx.ST_NO_AUTORESIZE)
-        # self.info_text2.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        # main_sizer.Add(self.info_text2, 0, wx.EXPAND | wx.ALL, 0)
-
-        hsizer = wx.BoxSizer(wx.HORIZONTAL)
-
-        # Left side: Use KherveDB periodic table
-        if KHERVE_AVAILABLE:
-            self.create_kherve_periodic_table(panel, hsizer)
-        else:
-            self.create_fallback_periodic_table(panel, hsizer)
-
-        # Right side: Core Level List and Buttons in raised panel
-        right_panel = wx.Panel(panel, style=wx.BORDER_RAISED)
-        right_sizer = wx.BoxSizer(wx.VERTICAL)
-
-        self.core_level_list = wx.ListBox(right_panel, style=wx.LB_MULTIPLE, size=(170, -1))
-        right_sizer.Add(self.core_level_list, 1, wx.EXPAND | wx.ALL, 5)
-
-        # Buttons
-        button_sizer = wx.GridBagSizer(1, 1)
-
-        self.add_labels_btn = wx.Button(right_panel, label="Add Labels")
-        self.remove_selected_btn = wx.Button(right_panel, label="Clear Selected")
-        self.remove_all_btn = wx.Button(right_panel, label="Clear All List")
-        self.auto_id_button = wx.Button(right_panel, label="Auto ID")
-        self.core_levels_btn = wx.Button(right_panel, label="Core Level List")
-
-        # Bind events
-        self.add_labels_btn.Bind(wx.EVT_BUTTON, self.OnAddLabels)
-        self.remove_selected_btn.Bind(wx.EVT_BUTTON, self.OnRemoveSelected)
-        self.remove_all_btn.Bind(wx.EVT_BUTTON, self.OnRemoveAll)
-        self.auto_id_button.Bind(wx.EVT_BUTTON, self.on_auto_id)
-        self.core_levels_btn.Bind(wx.EVT_BUTTON, self.on_show_core_levels)
-
-        button_sizer.Add(self.add_labels_btn, pos=(0, 0), flag=wx.EXPAND)
-        button_sizer.Add(self.remove_selected_btn, pos=(0, 1), flag=wx.EXPAND)
-        button_sizer.Add(self.remove_all_btn, pos=(1, 0), flag=wx.EXPAND)
-        button_sizer.Add(self.auto_id_button, pos=(1, 1), flag=wx.EXPAND)
-        button_sizer.Add(self.core_levels_btn, pos=(2, 0), span=(1, 2), flag=wx.EXPAND)
-
-        right_sizer.Add(button_sizer, 0, wx.ALL | wx.EXPAND, 5)
-
-        # ADD NEW INTENSITY CONTROL HERE
-        intensity_sizer = wx.BoxSizer(wx.HORIZONTAL)
-
-        intensity_label = wx.StaticText(right_panel, label="Line Intensity:")
-        intensity_sizer.Add(intensity_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 2)
-
-        # Decrease button
-        self.intensity_down_btn = wx.Button(right_panel, label="-", size=(25, 25))
-        self.intensity_down_btn.Bind(wx.EVT_BUTTON, self.OnIntensityDecrease)
-        intensity_sizer.Add(self.intensity_down_btn, 0, wx.ALL, 2)
-
-        # Display current value
-        self.intensity_display = wx.StaticText(right_panel, label="0.6", size=(30, -1), style=wx.ALIGN_CENTER)
-        self.intensity_display.SetBackgroundColour(wx.WHITE)
-        intensity_sizer.Add(self.intensity_display, 0, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 2)
-
-        # Increase button
-        self.intensity_up_btn = wx.Button(right_panel, label="+", size=(25, 25))
-        self.intensity_up_btn.Bind(wx.EVT_BUTTON, self.OnIntensityIncrease)
-        intensity_sizer.Add(self.intensity_up_btn, 0, wx.ALL, 2)
-
-        right_sizer.Add(intensity_sizer, 0, wx.ALL | wx.EXPAND, 5)
-
-        right_panel.SetSizer(right_sizer)
-        hsizer.Add(right_panel, 0, wx.EXPAND | wx.ALL, 0)
-        main_sizer.Add(hsizer, 1, wx.EXPAND)
-        panel.SetSizer(main_sizer)
 
     def InitUI(self):
         panel = wx.Panel(self)
@@ -353,9 +264,14 @@ class PeriodicTableWindow(wx.Frame):
         self.core_level_list = wx.ListBox(right_panel, style=wx.LB_MULTIPLE, size=(170, -1))
         right_sizer.Add(self.core_level_list, 1, wx.EXPAND | wx.ALL, 0)
 
+        # Simplified periodic table checkbox
+        self.simple_pt_check = wx.CheckBox(right_panel, label="Simplified Periodic Table")
+        self.simple_pt_check.SetValue(self._load_simplified_config())
+        self.simple_pt_check.Bind(wx.EVT_CHECKBOX, self.on_toggle_simple_pt_survey)
+        right_sizer.Add(self.simple_pt_check, 0, wx.ALL | wx.EXPAND, 0)
+
         # Buttons
         button_sizer = wx.GridBagSizer(1, 1)
-
         self.add_labels_btn = wx.Button(right_panel, label="Add Labels")
         self.remove_selected_btn = wx.Button(right_panel, label="Clear Selected")
         self.remove_all_btn = wx.Button(right_panel, label="Clear All List")
@@ -394,7 +310,6 @@ class PeriodicTableWindow(wx.Frame):
         self.intensity_up_btn = wx.Button(right_panel, label="+", size=(25, 25))
         self.intensity_up_btn.Bind(wx.EVT_BUTTON, self.OnIntensityIncrease)
         intensity_sizer.Add(self.intensity_up_btn, 0, wx.ALL, 2)
-
         right_sizer.Add(intensity_sizer, 0, wx.ALL | wx.EXPAND, 0)
 
         right_panel.SetSizer(right_sizer)
@@ -613,6 +528,39 @@ class PeriodicTableWindow(wx.Frame):
                 self.parent_window.canvas.draw_idle()
 
         event.Skip()
+
+    def _load_simplified_config(self):
+        """Read simplified_periodic_table from the main config.json"""
+        try:
+            import json, os
+            base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            config_path = os.path.join(base_path, 'config.json')
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    return json.load(f).get('simplified_periodic_table', False)
+        except Exception:
+            pass
+        return False
+
+    def on_toggle_simple_pt_survey(self, event):
+        """Toggle simplified mode and save to config"""
+        import json, os
+        simplified = self.simple_pt_check.IsChecked()
+        try:
+            base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            config_path = os.path.join(base_path, 'config.json')
+            config = {}
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+            config['simplified_periodic_table'] = simplified
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            print(f"Could not save config: {e}")
+        for btn in self.element_buttons.values():
+            btn.simplified = simplified
+            btn.Refresh()
 
     def initialize_vlines_tab2(self):
         """Initialize the three vertical lines for tab2."""
@@ -1106,6 +1054,8 @@ class PeriodicTableWindow(wx.Frame):
             # Create ElementTile using KherveDB's ElementTile class
             tile = ElementTile(pt_panel, element, color, enabled, atomic_number, core_level, binding_energy)
 
+            tile.simplified = self._load_simplified_config()
+
             # Set callbacks to use our methods instead of KherveDB's
             tile.set_click_callback(self.on_element_click_survey)
             tile.set_double_click_callback(self.on_element_double_click_survey)
@@ -1174,6 +1124,15 @@ class PeriodicTableWindow(wx.Frame):
 
             # Get filtered transitions (this is the key fix)
             transitions = self.get_element_transitions(element)
+
+            # # Get all transitions including Auger
+            # transitions = []
+            # for (elem, orbital), data in self.library_data.items():
+            #     if elem == element:
+            #         instrument = 'Al1486' if 'Al1486' in data else next(iter(data))
+            #         if 'position' in data[instrument]:
+            #             transitions.append((orbital, float(data[instrument]['position'])))
+            # transitions.sort(key=lambda x: x[1])
 
             # Add transitions to list without clearing existing items (like backup.py)
             existing_items = [self.core_level_list.GetString(i) for i in range(self.core_level_list.GetCount())]
@@ -1539,8 +1498,10 @@ class PeriodicTableWindow(wx.Frame):
 
         for (elem, orbital), data in self.library_data.items():
             if elem == element:
-                # Filter out orbitals not in allowed list
-                if orbital not in allowed_orbitals:
+                orbital_lower = orbital.lower()
+                is_auger = any(x in orbital_lower for x in ['kll', 'lmm', 'mnn', 'mvv', 'mnv'])
+                # Filter out non-Auger orbitals not in allowed list
+                if not is_auger and orbital not in allowed_orbitals:
                     continue
                 # Choose instrument based on whether it's an Auger line
                 if 'C-Any' in data:
@@ -1599,7 +1560,11 @@ class PeriodicTableWindow(wx.Frame):
                                     transitions[main_orbital] = energy
 
         # Sort transitions by binding energy
-        sorted_transitions = sorted(transitions.items(), key=lambda x: x[1])
+        photon_energy = getattr(self.parent_window, 'photons', 1486.6)
+        sorted_transitions = sorted(
+            [(orb, be) for orb, be in transitions.items() if 0 < be < photon_energy],
+            key=lambda x: x[1]
+        )
         return sorted_transitions
 
     def OnElementClick(self, event):
@@ -1850,7 +1815,8 @@ class PeriodicTableWindow(wx.Frame):
             ymin, ymax = self.parent_window.ax.get_ylim()
 
             # Filter transitions within xmin and xmax
-            valid_transitions = [t for t in transitions if xmax <= t[1] <= xmin]
+            photon_energy = getattr(self.parent_window, 'photons', 1486.6)
+            valid_transitions = [t for t in transitions if xmax <= t[1] <= xmin and t[1] < photon_energy]
 
             if valid_transitions:
                 # Get RSF values for each transition
@@ -1865,8 +1831,12 @@ class PeriodicTableWindow(wx.Frame):
                         self.element_lines[element] = []
 
                     for (orbital, be), rsf in zip(valid_transitions, rsf_values):
-                        # For RSF = 0, use 0.1 of the max scale; otherwise normalize normally
-                        if rsf == 0:
+                        orbital_lower = orbital.lower()
+                        is_auger = any(x in orbital_lower for x in ['kll', 'lmm', 'mnn', 'mvv', 'mnv'])
+                        if is_auger:
+                            # Auger lines fixed at 0.3 of the biggest line height
+                            intensity = 0.3 * self.intensity_scale * (ymax - ymin)
+                        elif rsf == 0:
                             intensity = 0.1 * self.intensity_scale * (ymax - ymin)
                         else:
                             intensity = (rsf / max_rsf) * self.intensity_scale * (ymax - ymin)
@@ -2783,7 +2753,9 @@ class CoreLevelListWindow(wx.Frame):
                 continue
 
             # Choose instrument
-            if 'C-Any' in data:
+            orbital_lower = orbital.lower()
+            is_auger_orbital = any(x in orbital_lower for x in ['kll', 'lmm', 'mnn', 'mvv', 'mnv'])
+            if is_auger_orbital and 'C-Any' in data:
                 instrument = 'C-Any'
             elif 'Al1486' in data:
                 instrument = 'Al1486'

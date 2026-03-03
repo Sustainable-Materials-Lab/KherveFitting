@@ -7,6 +7,7 @@ import re
 from typing import Dict, List, Tuple
 import os
 import sys
+import json
 import pyperclip
 import matplotlib
 import wx.adv
@@ -26,6 +27,9 @@ class PeriodicTableXPS(wx.Frame):
                          size=(690, 720))
 
         self.parent = parent
+
+        # Load persistent configuration
+        self.config = self.load_config()
 
         if platform.system() == 'Darwin':  # Mac OS
             window_size = (680, 720)
@@ -88,6 +92,9 @@ class PeriodicTableXPS(wx.Frame):
         # Default to Carbon 1s
         wx.CallAfter(self.select_element, 'C')
         wx.CallAfter(self.set_line_selection, '1s')
+        # Apply simplified mode from config on startup
+        if self.config.get('simplified_periodic_table', False):
+            wx.CallAfter(self.refresh_periodic_table)
 
     def on_close(self, event):
         """Handle window close event"""
@@ -155,6 +162,10 @@ class PeriodicTableXPS(wx.Frame):
 
         # File menu
         file_menu = wx.Menu()
+        export_item = file_menu.Append(wx.ID_ANY, '&Export Filtered Data...\tCtrl+E',
+                                       'Export currently filtered NIST data to a text file')
+        self.Bind(wx.EVT_MENU, self.export_filtered_data, export_item)
+        file_menu.AppendSeparator()
         exit_item = file_menu.Append(wx.ID_EXIT, 'E&xit\tCtrl+Q', 'Exit application')
         self.Bind(wx.EVT_MENU, lambda e: self.Close(), exit_item)
         menubar.Append(file_menu, '&File')
@@ -164,6 +175,11 @@ class PeriodicTableXPS(wx.Frame):
         databases_item = view_menu.Append(wx.ID_ANY, '&Other Databases && Properties',
                                           'Open Other Databases & Properties panel')
         self.Bind(wx.EVT_MENU, self.show_element_properties, databases_item)
+        view_menu.AppendSeparator()
+        self.simple_pt_item = view_menu.AppendCheckItem(wx.ID_ANY, '&Simplified Periodic Table',
+                                                        'Show element tiles without colours or extra info')
+        self.simple_pt_item.Check(self.config.get('simplified_periodic_table', False))
+        self.Bind(wx.EVT_MENU, self.on_toggle_simple_pt, self.simple_pt_item)
         menubar.Append(view_menu, '&View')
 
         # Help menu
@@ -173,6 +189,51 @@ class PeriodicTableXPS(wx.Frame):
         menubar.Append(help_menu, '&Help')
 
         self.SetMenuBar(menubar)
+
+    def export_filtered_data(self, event):
+        """Export currently filtered NIST data to a tab-delimited text file"""
+        filtered_df = self.get_filtered_data()
+        if filtered_df.empty:
+            wx.MessageBox("No data to export (current filter returns 0 rows).",
+                          "Export", wx.OK | wx.ICON_INFORMATION)
+            return
+
+        # Suggest a filename based on current element / line selection
+        element_part = self.selected_element if self.selected_element else "all"
+        line_sel = self.line_combo.GetStringSelection()
+        line_part = line_sel.replace("/", "-") if line_sel != "All Lines" else "all_lines"
+        default_name = f"NIST_XPS_{element_part}_{line_part}.txt"
+
+        with wx.FileDialog(
+            self, "Export filtered data",
+            defaultFile=default_name,
+            wildcard="Text files (*.txt)|*.txt|CSV files (*.csv)|*.csv|All files (*.*)|*.*",
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT
+        ) as dlg:
+            if dlg.ShowModal() == wx.ID_CANCEL:
+                return
+            path = dlg.GetPath()
+
+        try:
+            sep = "," if path.lower().endswith(".csv") else "\t"
+            filtered_df.to_csv(path, index=False, sep=sep, encoding='utf-8')
+            self.status_text.SetLabel(f"Exported {len(filtered_df)} rows to {os.path.basename(path)}")
+        except Exception as e:
+            wx.MessageBox(f"Export failed:\n{e}", "Export Error", wx.OK | wx.ICON_ERROR)
+
+    def on_toggle_simple_pt(self, event):
+        """Toggle simplified periodic table view and save to config"""
+        simplified = self.simple_pt_item.IsChecked()
+        self.config['simplified_periodic_table'] = simplified
+        self.save_config()
+        self.refresh_periodic_table()
+
+    def refresh_periodic_table(self):
+        """Redraw all element tiles to reflect the current simplified/full mode"""
+        simplified = self.config.get('simplified_periodic_table', False)
+        for element, btn in self.element_buttons.items():
+            btn.simplified = simplified
+            btn.Refresh()
 
     def show_about(self, event):
         """Display information about the application"""
@@ -197,6 +258,34 @@ Version: 2.0"""
 
         wx.MessageBox(about_text, "About My KherveDB Library",
                       wx.OK | wx.ICON_INFORMATION)
+
+    def load_config(self):
+        """Load configuration from config.json next to the script"""
+        try:
+            if getattr(sys, 'frozen', False):
+                base_path = os.path.dirname(sys.executable)
+            else:
+                base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            config_path = os.path.join(base_path, 'config.json')
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return {}
+
+    def save_config(self):
+        """Save configuration to config.json next to the script"""
+        try:
+            if getattr(sys, 'frozen', False):
+                base_path = os.path.dirname(sys.executable)
+            else:
+                base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            config_path = os.path.join(base_path, 'config.json')
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(self.config, f, indent=2)
+        except Exception as e:
+            print(f"Could not save config: {e}")
 
     def load_data(self):
         """Load XPS data from file"""
@@ -4690,6 +4779,7 @@ class ElementTile(wx.Panel):
         self.binding_energy = binding_energy or 'N.D.'
         self.hover = False
         self.pressed = False
+        self.simplified = False  # Set by refresh_periodic_table from config
 
         # Pre-compute platform-dependent fonts once (not on every repaint)
         self._is_macos = platform.system() == 'Darwin'
@@ -4721,9 +4811,32 @@ class ElementTile(wx.Panel):
         """Draw the element tile with atomic number, element symbol, core level, and binding energy"""
         dc = wx.PaintDC(self)
         gc = wx.GraphicsContext.Create(dc)
-
         width, height = self.GetSize()
 
+        # ── Simplified mode: plain white/light-grey, element symbol only ──────
+        if self.simplified:
+            # Honour externally set color (e.g. green when selected in Survey)
+            external_color = wx.Colour(self.color) if isinstance(self.color, str) else self.color
+            is_green = (external_color.Red() == 0 and external_color.Green() == 255 and external_color.Blue() == 0)
+            if not self.enabled:
+                bg = wx.Colour(220, 220, 220)
+            elif is_green:
+                bg = wx.Colour(0, 255, 0)
+            elif self.hover:
+                bg = wx.Colour(210, 210, 210)
+            else:
+                bg = wx.Colour(245, 245, 245)
+            gc.SetPen(wx.Pen(wx.Colour(160, 160, 160), 1))
+            gc.SetBrush(wx.Brush(bg))
+            gc.DrawRoundedRectangle(0, 0, width - 1, height - 1, 2)
+            text_color = wx.BLACK if self.enabled else wx.Colour(160, 160, 160)
+            font = self._element_font
+            gc.SetFont(font, text_color)
+            tw, th = gc.GetTextExtent(self.element)
+            gc.DrawText(self.element, (width - tw) / 2, (height - th) / 2)
+            return
+
+        # ── Full mode (default) ───────────────────────────────────────────────
         # Determine the actual color to use (existing color logic)
         if not self.enabled:
             base_color = wx.Colour(self.color)
