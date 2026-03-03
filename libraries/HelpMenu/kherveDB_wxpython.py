@@ -159,6 +159,13 @@ class PeriodicTableXPS(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda e: self.Close(), exit_item)
         menubar.Append(file_menu, '&File')
 
+        # View menu
+        view_menu = wx.Menu()
+        databases_item = view_menu.Append(wx.ID_ANY, '&Other Databases && Properties',
+                                          'Open Other Databases & Properties panel')
+        self.Bind(wx.EVT_MENU, self.show_element_properties, databases_item)
+        menubar.Append(view_menu, '&View')
+
         # Help menu
         help_menu = wx.Menu()
         about_item = help_menu.Append(wx.ID_ABOUT, '&About', 'About this application')
@@ -728,34 +735,31 @@ Version: 2.0"""
 
     def get_filtered_data(self):
         """Get filtered dataframe based on current selections"""
-        filtered_df = self.df.copy()
+        # Build a boolean mask without copying the full DataFrame
+        mask = pd.Series([True] * len(self.df), index=self.df.index)
 
         # Filter by element
         if self.selected_element:
-            filtered_df = filtered_df[filtered_df['Element'] == self.selected_element]
+            mask &= self.df['Element'] == self.selected_element
 
         # Filter by line
         selected_line = self.line_combo.GetStringSelection()
         if selected_line != 'All Lines':
-            filtered_df = filtered_df[filtered_df['Line'] == selected_line]
+            mask &= self.df['Line'] == selected_line
 
         # Filter by formula
         formula_search = self.formula_search.GetValue().strip().lower()
         if formula_search:
             formula_search = re.escape(formula_search)
-            filtered_df = filtered_df[
-                filtered_df['Formula'].str.lower().str.contains(formula_search, na=False)
-            ]
+            mask &= self.df['Formula'].str.lower().str.contains(formula_search, na=False)
 
         # Filter by name
         name_search = self.name_search.GetValue().strip().lower()
         if name_search:
             name_search = re.escape(name_search)
-            filtered_df = filtered_df[
-                filtered_df['Name'].str.lower().str.contains(name_search, na=False)
-            ]
+            mask &= self.df['Name'].str.lower().str.contains(name_search, na=False)
 
-        return filtered_df
+        return self.df[mask]
 
     def update_results(self):
         """Update the results grid"""
@@ -789,28 +793,34 @@ Version: 2.0"""
         else:
             filtered_df = filtered_df.sort_values(by='BE (eV)')
 
+        # Suspend redraws while updating grid (major speed improvement)
+        self.results_grid.BeginBatch()
+
         # Clear existing rows
         if self.results_grid.GetNumberRows() > 0:
             self.results_grid.DeleteRows(0, self.results_grid.GetNumberRows())
 
-        # Add new rows
-        for _, row in filtered_df.iterrows():
-            self.results_grid.AppendRows(1)
-            row_num = self.results_grid.GetNumberRows() - 1
+        # Add all rows in one call, then fill values
+        num_rows = len(filtered_df)
+        if num_rows > 0:
+            self.results_grid.AppendRows(num_rows)
+            for i, (_, row) in enumerate(filtered_df.iterrows()):
+                self.results_grid.SetCellValue(i, 0, str(row['Element']))
+                self.results_grid.SetCellValue(i, 1, str(row['Line']))
+                self.results_grid.SetCellValue(i, 2,
+                                               f"{row['BE (eV)']:.2f}" if pd.notnull(row['BE (eV)']) else "")
+                self.results_grid.SetCellValue(i, 3,
+                                               str(row['Formula']) if pd.notnull(row['Formula']) else "")
+                self.results_grid.SetCellValue(i, 4,
+                                               str(row['Name']) if pd.notnull(row['Name']) else "")
+                self.results_grid.SetCellValue(i, 5,
+                                               str(row['Journal']) if pd.notnull(row['Journal']) else "")
 
-            self.results_grid.SetCellValue(row_num, 0, str(row['Element']))
-            self.results_grid.SetCellValue(row_num, 1, str(row['Line']))
-            self.results_grid.SetCellValue(row_num, 2,
-                                           f"{row['BE (eV)']:.2f}" if pd.notnull(row['BE (eV)']) else "")
-            self.results_grid.SetCellValue(row_num, 3,
-                                           str(row['Formula']) if pd.notnull(row['Formula']) else "")
-            self.results_grid.SetCellValue(row_num, 4,
-                                           str(row['Name']) if pd.notnull(row['Name']) else "")
-            self.results_grid.SetCellValue(row_num, 5,
-                                           str(row['Journal']) if pd.notnull(row['Journal']) else "")
+        # Resume redraws
+        self.results_grid.EndBatch()
 
         # Update status
-        self.status_text.SetLabel(f"{len(filtered_df)} results found")
+        self.status_text.SetLabel(f"{num_rows} results found")
 
     def on_column_click(self, event):
         """Handle column header click for sorting"""
@@ -4681,6 +4691,19 @@ class ElementTile(wx.Panel):
         self.hover = False
         self.pressed = False
 
+        # Pre-compute platform-dependent fonts once (not on every repaint)
+        self._is_macos = platform.system() == 'Darwin'
+        if self._is_macos:
+            self._small_font = wx.Font(9, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
+            self._element_font = wx.Font(14, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
+            self._core_y_offset = 2
+        else:
+            self._small_font = wx.Font(7, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL,
+                                       faceName="Segoe UI")
+            self._element_font = wx.Font(11, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD,
+                                         faceName="Segoe UI")
+            self._core_y_offset = 0
+
         # Bind paint and mouse events
         self.Bind(wx.EVT_PAINT, self.on_paint)
         self.Bind(wx.EVT_LEFT_DOWN, self.on_mouse_down)
@@ -4731,23 +4754,10 @@ class ElementTile(wx.Panel):
         gc.SetBrush(wx.Brush(actual_color))
         gc.DrawRoundedRectangle(0, 0, width - 1, height - 1, 2)
 
-        # Set up fonts and colors - PLATFORM SPECIFIC
+        # Use pre-cached fonts and platform flag (computed once in __init__)
         text_color = wx.BLACK if self.enabled else wx.Colour(136, 136, 136)
-
-        import platform
-        if platform.system() == 'Darwin':  # macOS
-            small_font_size = 9
-            element_font_size = 14
-            small_font = wx.Font(small_font_size, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
-            element_font = wx.Font(element_font_size, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
-        else:  # Windows and other systems
-            small_font_size = 7
-            element_font_size = 11
-            # Use Segoe UI which is clearer on Windows
-            small_font = wx.Font(small_font_size, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL,
-                                 faceName="Segoe UI")
-            element_font = wx.Font(element_font_size, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD,
-                                   faceName="Segoe UI")
+        small_font = self._small_font
+        element_font = self._element_font
 
         # 1. Draw atomic number in top-left corner
         if self.atomic_number and self.atomic_number > 0:
@@ -4778,22 +4788,14 @@ class ElementTile(wx.Panel):
             gc.SetFont(small_font, text_color)
             core_width, core_height = gc.GetTextExtent(self.core_level)
             core_x = (width - core_width) / 2
-            import platform
-            if platform.system() == 'Darwin':  # macOS
-                core_y = element_y + element_height + 2  # Below the element symbol
-            else:
-                core_y = element_y + element_height + 0
+            core_y = element_y + element_height + self._core_y_offset
             gc.DrawText(self.core_level, core_x, core_y)
         elif self.core_level == 'N.D.':
             # Show N.D. for elements with no data
             gc.SetFont(small_font, text_color)
             core_width, core_height = gc.GetTextExtent('N.D.')
             core_x = (width - core_width) / 2
-            import platform
-            if platform.system() == 'Darwin':  # macOS
-                core_y = element_y + element_height + 2  # Below the element symbol
-            else:
-                core_y = element_y + element_height + 0
+            core_y = element_y + element_height + self._core_y_offset
             gc.DrawText('N.D.', core_x, core_y)
 
     def on_mouse_down(self, event):
