@@ -1368,12 +1368,12 @@ class PlotFrame(wx.Frame):
         self.canvas.draw()
 
 
-class ElementPropertiesDialog(wx.Dialog):
+class ElementPropertiesDialog(wx.Frame):
     """Dialog for showing element properties"""
 
     def __init__(self, parent, element, df, scholar_load_delay=60):
         super().__init__(parent, title=f"Other Databases & Properties for {element}",
-                         size=(1000, 900), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.MAXIMIZE_BOX | wx.MINIMIZE_BOX)
+                         size=(1000, 900), style=wx.DEFAULT_FRAME_STYLE)
 
         self.element = element
         self.df = df
