@@ -1681,91 +1681,6 @@ def save_to_json(window, file_path):
         json.dump(data_to_save, json_file, indent=2)
 
 
-def save_plot_to_excel_OLD(window):
-    if 'FilePath' not in window.Data or not window.Data['FilePath']:
-        wx.MessageBox("No file selected. Please open a file first.", "Error", wx.OK | wx.ICON_ERROR)
-        return
-
-    file_path = window.Data['FilePath']
-    sheet_name = window.sheet_combobox.GetValue()
-    is_survey = "survey" in sheet_name.lower() or "wide" in sheet_name.lower()
-    is_raman = sheet_name.startswith('RA') or 'RAMAN' in sheet_name.upper() or "Ra_" in sheet_name
-
-    try:
-        # Get dimensions based on plot type
-        width = window.survey_excel_width if is_survey else window.excel_width
-        height = window.survey_excel_height if is_survey else window.excel_height
-        dpi = window.survey_excel_dpi if is_survey else window.excel_dpi
-
-        if is_raman:
-            # Set proper axis orientation after saving
-            limits = window.plot_config.get_plot_limits(window, sheet_name)
-
-            # Check for identical limits and adjust if necessary
-            if limits['Xmin'] == limits['Xmax']:
-                # Expand the limits slightly to avoid matplotlib warning
-                if limits['Xmin'] == 0:
-                    limits['Xmin'] = -1.0
-                    limits['Xmax'] = 1.0
-                else:
-                    range_val = abs(limits['Xmin']) * 0.1 or 1.0
-                    limits['Xmin'] -= range_val
-                    limits['Xmax'] += range_val
-
-            window.ax.set_xlim(limits['Xmin'], limits['Xmax'])  # Normal direction for Raman
-
-        # Save figure to buffer
-        buf = io.BytesIO()
-        original_size = window.figure.get_size_inches()
-        window.figure.set_size_inches(width, height)
-
-        # Save the figure
-        window.figure.savefig(buf, format='png', dpi=dpi, bbox_inches='tight')
-        window.figure.set_size_inches(original_size)
-        buf.seek(0)
-
-        # Save to Excel
-        wb = openpyxl.load_workbook(file_path)
-        ws = wb.create_sheet(sheet_name) if sheet_name not in wb.sheetnames else wb[sheet_name]
-
-        # Clear existing images
-        for img in ws._images:
-            ws._images.remove(img)
-
-        # Add new image
-        img = Image(buf)
-        ws.add_image(img, 'D6')
-        wb.save(file_path)
-
-        print(f"Plot saved to Excel file: {file_path}, Sheet: {sheet_name}")
-        window.show_popup_message2("Plot saved into Excel file", f"Under sheet: {sheet_name}")
-
-        # Set proper axis orientation after saving
-        is_profile = sheet_name.startswith('zzProfile')
-        limits = window.plot_config.get_plot_limits(window, sheet_name)
-
-        # Check for identical limits and adjust if necessary
-        if limits['Xmin'] == limits['Xmax']:
-            # Expand the limits slightly to avoid matplotlib warning
-            if limits['Xmin'] == 0:
-                limits['Xmin'] = -1.0
-                limits['Xmax'] = 1.0
-            else:
-                range_val = abs(limits['Xmin']) * 0.1 or 1.0
-                limits['Xmin'] -= range_val
-                limits['Xmax'] += range_val
-
-        if is_raman or is_profile:
-            window.ax.set_xlim(limits['Xmin'], limits['Xmax'])  # Normal direction for Raman and Profiles
-        else:
-            window.ax.set_xlim(limits['Xmax'], limits['Xmin'])  # Reverse X-axis for XPS
-        window.canvas.draw_idle()
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        wx.MessageBox(f"Error saving plot to Excel: {str(e)}", "Error", wx.OK | wx.ICON_ERROR)
-
 
 def save_plot_to_excel(window, update_console=None):
     if 'FilePath' not in window.Data or not window.Data['FilePath']:
@@ -1833,6 +1748,65 @@ def save_plot_to_excel(window, update_console=None):
                 wx.MessageBox("EDX HeatMap window not available.\nPlease open the EDX HeatMap window first.",
                               "Info", wx.OK | wx.ICON_INFORMATION)
             return
+
+        # Handle XPS~Map - save the heatmap currently shown on the main window
+        # The map is plotted via FileManager.plot_xps_map_on_main onto window.figure/window.ax
+        is_xps_map = sheet_name.startswith('XPS~Map')
+        if is_xps_map:
+            # Check that an XPS~Map is actually displayed on the main canvas
+            if not (hasattr(window, 'xps_map_on_main') and window.xps_map_on_main == sheet_name):
+                # Friendly reminder to plot the map first
+                if update_console:
+                    update_console(
+                        f"XPS~Map '{sheet_name}' is not currently shown on the main plot. "
+                        "Select it in the File Manager and press F2 / F4 or the Map icon to plot it first."
+                    )
+                else:
+                    wx.MessageBox(
+                        f"'{sheet_name}' is not currently displayed on the main plot.\n\n"
+                        "Please select the XPS~Map in the File Manager and press F2, F4, or "
+                        "the Map icon to display it first.",
+                        "XPS Map Not Displayed", wx.OK | wx.ICON_INFORMATION
+                    )
+                return
+
+            try:
+                # Capture the current figure (which shows the XPS~Map heatmap)
+                buf = io.BytesIO()
+                original_size = window.figure.get_size_inches()
+                window.figure.set_size_inches(window.excel_width, window.excel_height)
+                window.figure.savefig(buf, format='png', dpi=window.excel_dpi, bbox_inches='tight')
+                window.figure.set_size_inches(original_size)
+                buf.seek(0)
+
+                wb = openpyxl.load_workbook(file_path)
+                if sheet_name not in wb.sheetnames:
+                    ws = wb.create_sheet(sheet_name)
+                else:
+                    ws = wb[sheet_name]
+
+                # Add the image WITHOUT clearing existing data (matrix rows stay intact)
+                # Only replace any existing images
+                ws._images = []
+                img = Image(buf)
+                ws.add_image(img, 'D6')
+                wb.save(file_path)
+
+                if update_console:
+                    update_console(f"XPS Map image saved to Excel under sheet: {sheet_name}")
+                else:
+                    window.show_popup_message2("XPS Map image saved to Excel", f"Under sheet: {sheet_name}")
+                return
+
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                error_msg = f"Error saving XPS Map image to Excel: {str(e)}"
+                if update_console:
+                    update_console(error_msg)
+                else:
+                    wx.MessageBox(error_msg, "Error", wx.OK | wx.ICON_ERROR)
+                return
 
         # Get dimensions based on plot type
 

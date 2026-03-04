@@ -46,7 +46,7 @@ class FileManagerWindow(wx.Frame):
                 return
 
         # Only initialize the window if we didn't exceed the limit
-        super().__init__(parent, title="Sample/Experiment Manager", size=(580, 350),
+        super().__init__(parent, title="Sample/Experiment Manager", size=(580, 300),
                          style=wx.DEFAULT_FRAME_STYLE | wx.STAY_ON_TOP, *args, **kwargs)
 
         # Add this line to set a minimum window size
@@ -222,6 +222,16 @@ class FileManagerWindow(wx.Frame):
         map_tool = self.v_toolbar.AddTool(wx.ID_ANY, "Create Map", map_bmp,
                                          "Create XPS~Map from selected core levels")
         self.Bind(wx.EVT_TOOL, self.on_create_map_from_selection, map_tool)
+
+        # Open ScientaMapViewer button (same icon as Create Map)
+        scienta_map_icon = os.path.join(icon_path, "heatmap-3.png")
+        if os.path.exists(scienta_map_icon):
+            scienta_map_bmp = wx.Bitmap(scienta_map_icon)
+        else:
+            scienta_map_bmp = wx.ArtProvider.GetBitmap(wx.ART_FIND, wx.ART_TOOLBAR)
+        scienta_map_tool = self.v_toolbar.AddTool(wx.ID_ANY, "Open Map Viewer", scienta_map_bmp,
+                                                  "Open ScientaMapViewer for the selected XPS~Map")
+        self.Bind(wx.EVT_TOOL, self.on_open_scienta_map_viewer, scienta_map_tool)
 
 
     def create_toolbar(self):
@@ -1203,6 +1213,15 @@ class FileManagerWindow(wx.Frame):
 
     def on_plot_selected(self, event):
         """Plot the currently selected core level(s)"""
+        sheet_names = self.get_selected_sheet_names()
+
+        # If the single selected sheet is an XPS~Map, plot all sweep lines (overlay)
+        if sheet_names and len(sheet_names) == 1 and sheet_names[0].startswith('XPS~Map'):
+            self.plot_xps_map_lines(sheet_names[0], offset=False)
+            self.highlight_current_sheet(sheet_names[0])
+            self.Raise()
+            return
+
         # Clear heatmap data when switching to regular plot
         if hasattr(self.parent, 'heatmap_data'):
             self.parent.heatmap_data = None
@@ -1210,8 +1229,6 @@ class FileManagerWindow(wx.Frame):
 
         # # Hide heatmap controls when switching to regular plots
         # self.hide_heatmap_controls()
-
-        sheet_names = self.get_selected_sheet_names()
 
         if sheet_names:
             if len(sheet_names) == 1:
@@ -1784,30 +1801,11 @@ class FileManagerWindow(wx.Frame):
                 self._plotting_edx = False
             return
 
-        # Check if this is an XPS~Map sheet
+        # Check if this is an XPS~Map sheet — single-click plots sweep lines on the main window
         if sheet_name.startswith('XPS~Map'):
-            # Prevent re-entry
-            if hasattr(self, '_plotting_xps_map') and self._plotting_xps_map:
-                return
-            self._plotting_xps_map = True
-
-            try:
-                # Check if window already open for this map
-                if hasattr(self.parent, 'scienta_map_window') and self.parent.scienta_map_window:
-                    try:
-                        if not self.parent.scienta_map_window.IsBeingDeleted():
-                            self.parent.scienta_map_window.Raise()
-                            return
-                    except Exception as e:
-                        pass
-
-                # Open new map viewer
-                from libraries.ViewMenu.ScientaMapViewer import open_scienta_map_viewer
-                map_window = open_scienta_map_viewer(self.parent, sheet_name)
-                if map_window:
-                    self.parent.scienta_map_window = map_window
-            finally:
-                self._plotting_xps_map = False
+            self.plot_xps_map_lines(sheet_name, offset=False)
+            self.parent.sheet_combobox.SetValue(sheet_name)
+            self.highlight_current_sheet(sheet_name)
             return
         # Update parent's combobox
         self.parent.sheet_combobox.SetValue(sheet_name)
@@ -2376,14 +2374,8 @@ class FileManagerWindow(wx.Frame):
                             if edx_window:
                                 edx_window.load_file(hdf5_path, 'EDX Map')
                 elif cell_value.startswith('XPS~Map'):
-                    # Set flag to prevent re-entry
-                    self._processing_cell_click = True
-                    try:
-                        from libraries.ViewMenu.ScientaMapViewer import open_scienta_map_viewer
-                        open_scienta_map_viewer(self.parent, cell_value)
-                    finally:
-                        # Reset flag after a short delay to allow event processing to complete
-                        wx.CallLater(500, self._reset_cell_click_flag)
+                    # Single-click on XPS~Map → overlay line plot on main window
+                    wx.CallAfter(self.quick_plot_sheet, cell_value)
                 else:
                     wx.CallAfter(self.quick_plot_sheet, cell_value)
 
@@ -4087,6 +4079,13 @@ class FileManagerWindow(wx.Frame):
         """Plot the currently selected core level(s) with offset"""
         sheet_names = self.get_selected_sheet_names()
 
+        # If the single selected sheet is an XPS~Map, plot all sweep lines with offset
+        if sheet_names and len(sheet_names) == 1 and sheet_names[0].startswith('XPS~Map'):
+            self.plot_xps_map_lines(sheet_names[0], offset=True)
+            self.highlight_current_sheet(sheet_names[0])
+            self.Raise()
+            return
+
         if sheet_names:
             if len(sheet_names) == 1:
                 # Single sheet - update combobox and plot
@@ -4106,6 +4105,13 @@ class FileManagerWindow(wx.Frame):
     def on_plot_selected_with_fitted_data(self, event):
         """Plot the currently selected core level(s) with offset and fitted data"""
         sheet_names = self.get_selected_sheet_names()
+
+        # If the single selected sheet is an XPS~Map, show the 2D heatmap (F4 = heatmap view)
+        if sheet_names and len(sheet_names) == 1 and sheet_names[0].startswith('XPS~Map'):
+            self.plot_xps_map_on_main(sheet_names[0])
+            self.highlight_current_sheet(sheet_names[0])
+            self.Raise()
+            return
 
         if sheet_names:
             if len(sheet_names) == 1:
@@ -6423,6 +6429,13 @@ class FileManagerWindow(wx.Frame):
             self.parent.show_popup_message2("No Selection", "Please select core levels to plot as heatmap.")
             return
 
+        # If a single XPS~Map sheet is selected, plot it directly on the main window
+        if len(sheet_names) == 1 and sheet_names[0].startswith('XPS~Map'):
+            self.plot_xps_map_on_main(sheet_names[0])
+            self.highlight_current_sheet(sheet_names[0])
+            self.Raise()
+            return
+
         if len(sheet_names) < 2:
             self.parent.show_popup_message2("Insufficient Data", "Please select at least 2 core levels for heatmap.")
             return
@@ -6436,6 +6449,240 @@ class FileManagerWindow(wx.Frame):
         else:
             # Create new heatmap
             self.plot_heatmap(sheet_names)
+
+    def plot_xps_map_lines(self, map_sheet_name, offset=False):
+        """
+        Plot all sweep lines from an XPS~Map as individual line spectra on the main window.
+        F2 → overlay (offset=False), F3 → stacked with vertical offset (offset=True).
+        """
+        if map_sheet_name not in self.parent.Data['Core levels']:
+            self.parent.show_popup_message2("Error", f"Map sheet '{map_sheet_name}' not found in data.")
+            return
+
+        map_data = self.parent.Data['Core levels'][map_sheet_name]
+        be_values = np.array(map_data.get('B.E.', []))
+        num_sweeps = map_data.get('_num_sweeps', 0)
+        if num_sweeps == 0:
+            num_sweeps = sum(1 for k in map_data if k.startswith('Y') and k[1:].isdigit())
+
+        if num_sweeps == 0 or len(be_values) == 0:
+            self.parent.show_popup_message2("Error", f"Invalid map data in '{map_sheet_name}'.")
+            return
+
+        # --- clear axes and any existing colorbar ---
+        self.parent.ax.clear()
+        if hasattr(self.parent, 'heatmap_colorbar') and self.parent.heatmap_colorbar is not None:
+            try:
+                if hasattr(self.parent.heatmap_colorbar, 'ax'):
+                    self.parent.figure.delaxes(self.parent.heatmap_colorbar.ax)
+                self.parent.heatmap_colorbar = None
+            except Exception:
+                pass
+        if hasattr(self.parent, 'plot_manager'):
+            pm = self.parent.plot_manager
+            if hasattr(pm, 'residuals_subplot') and pm.residuals_subplot:
+                try:
+                    self.parent.figure.delaxes(pm.residuals_subplot)
+                except Exception:
+                    pass
+                pm.residuals_subplot = None
+                self.parent.ax.get_xaxis().set_visible(True)
+
+        # Restore full axes width (no colorbar needed)
+        self.parent.ax.set_position([0.1, 0.125, 0.85, 0.85])
+
+        # --- colour palette ---
+        import matplotlib.cm as cm
+        palette = getattr(self.parent, 'multiplot_palette', 'tab10')
+        cmap_lines = cm.get_cmap(palette)
+        linewidth = getattr(self.parent, 'multiplot_linewidth', 1.0)
+
+        # --- compute offset step from the first sweep's range ---
+        y0 = np.array(map_data.get('Y1', []))
+        if len(y0) > 0 and offset:
+            step = (y0.max() - y0.min()) * getattr(self, 'offset_multiplier', 1)
+        else:
+            step = 0.0
+
+        x_min = float(be_values.min())
+        x_max = float(be_values.max())
+
+        max_legend = getattr(self.parent, 'multiplot_max_legend_items', 10)
+
+        for i in range(num_sweeps):
+            col_name = f'Y{i + 1}'
+            if col_name not in map_data:
+                continue
+            y_values = np.array(map_data[col_name], dtype=float)
+            y_plot = y_values + i * step
+
+            color_value = 0.1 + 0.65 * i / max(num_sweeps - 1, 1)
+            color = cmap_lines(color_value)
+            label = f'Sweep {i + 1}' if num_sweeps <= max_legend else None
+            self.parent.ax.plot(be_values, y_plot, color=color,
+                                linewidth=linewidth, label=label)
+
+        # --- axes formatting (same style as plot_multiple_sheets) ---
+        base_name = (map_data.get('_core_level', '')
+                     or map_data.get('ExperimentalInfo', {}).get('Core Level', '')
+                     or map_sheet_name)
+
+        self.parent.ax.set_xlabel('Binding Energy (eV)',
+                                  fontsize=getattr(self.parent, 'axis_title_size', 10))
+        self.parent.ax.set_ylabel('Intensity (CPS)',
+                                  fontsize=getattr(self.parent, 'axis_title_size', 10))
+        self.parent.ax.tick_params(axis='both',
+                                   labelsize=getattr(self.parent, 'axis_number_size', 9))
+
+        # XPS convention: reversed x-axis
+        self.parent.ax.set_xlim(x_max, x_min)
+
+        # Core-level label top-right (same style as plot_multiple_sheets)
+        formatted_name = self.parent.plot_manager.format_sheet_name(base_name)
+        sheet_name_text = self.parent.ax.text(
+            0.98, 0.98, formatted_name,
+            transform=self.parent.ax.transAxes,
+            fontsize=getattr(self.parent, 'core_level_text_size', 12),
+            fontfamily=[getattr(self.parent, 'plot_font', 'sans-serif')],
+            fontweight='bold',
+            verticalalignment='top',
+            horizontalalignment='right',
+            bbox=dict(facecolor='none', edgecolor='none', alpha=1),
+        )
+        sheet_name_text.sheet_name_text = True
+
+        if num_sweeps <= max_legend:
+            ncol = getattr(self.parent, 'multiplot_legend_ncol', 2)
+            self.parent.ax.legend(loc='upper left', ncol=ncol)
+
+        from matplotlib.ticker import ScalarFormatter
+        self.parent.ax.yaxis.set_major_formatter(ScalarFormatter(useMathText=True))
+        self.parent.ax.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
+
+        # Mark that main window now shows a line plot (not a heatmap)
+        self.parent.xps_map_on_main = None
+        self.parent.sheet_combobox.SetValue(map_sheet_name)
+
+        self.parent.canvas.draw_idle()
+
+    def plot_xps_map_on_main(self, map_sheet_name):
+        """
+        Plot an XPS~Map sheet as a 2D heatmap directly on the main KherveFitting window.
+        This is triggered by F2, F4, or the Map/Heatmap toolbar icon when an XPS~Map cell
+        is selected in the FileManager grid.
+        """
+        if map_sheet_name not in self.parent.Data['Core levels']:
+            self.parent.show_popup_message2("Error", f"Map sheet '{map_sheet_name}' not found in data.")
+            return
+
+        map_data = self.parent.Data['Core levels'][map_sheet_name]
+
+        # Retrieve BE values and sweep data
+        be_values = np.array(map_data.get('B.E.', []))
+        num_sweeps = map_data.get('_num_sweeps', 0)
+        if num_sweeps == 0:
+            num_sweeps = sum(1 for k in map_data if k.startswith('Y') and k[1:].isdigit())
+
+        if num_sweeps == 0 or len(be_values) == 0:
+            self.parent.show_popup_message2("Error", f"Invalid map data in '{map_sheet_name}'.")
+            return
+
+        # Build 2D data array (num_sweeps × num_be_points)
+        data_2d = np.zeros((num_sweeps, len(be_values)))
+        for i in range(num_sweeps):
+            col_name = f'Y{i + 1}'
+            if col_name in map_data:
+                data_2d[i, :] = np.array(map_data[col_name])
+
+        # Use whichever colormap the user has set (default viridis)
+        cmap_name = getattr(self.parent, 'heatmap_colormap', 'viridis')
+
+        # ---------- clear the main axes properly ----------
+        self.parent.ax.clear()
+
+        # Remove old colorbar if present
+        if hasattr(self.parent, 'heatmap_colorbar') and self.parent.heatmap_colorbar is not None:
+            try:
+                if hasattr(self.parent.heatmap_colorbar, 'ax'):
+                    self.parent.figure.delaxes(self.parent.heatmap_colorbar.ax)
+                self.parent.heatmap_colorbar = None
+            except Exception:
+                pass
+
+        # Remove residuals subplot if present
+        if hasattr(self.parent, 'plot_manager'):
+            pm = self.parent.plot_manager
+            if hasattr(pm, 'residuals_subplot') and pm.residuals_subplot:
+                try:
+                    self.parent.figure.delaxes(pm.residuals_subplot)
+                except Exception:
+                    pass
+                pm.residuals_subplot = None
+                self.parent.ax.get_xaxis().set_visible(True)
+
+        # Reset axes to fixed position - MUST be set before and after colorbar creation
+        # to prevent matplotlib from stealing space from the axes on each call
+        self.parent.ax.set_position([0.1, 0.1, 0.73, 0.85])
+
+        # ---------- draw heatmap ----------
+        be_descending = be_values[0] > be_values[-1] if len(be_values) > 1 else False
+        extent_x0 = float(be_values[0])
+        extent_x1 = float(be_values[-1])
+
+        if be_descending:
+            heatmap_img = self.parent.ax.imshow(
+                data_2d, aspect='auto', origin='lower',
+                extent=[extent_x0, extent_x1, 0, num_sweeps],
+                cmap=cmap_name)
+        else:
+            data_flipped = np.fliplr(data_2d)
+            heatmap_img = self.parent.ax.imshow(
+                data_flipped, aspect='auto', origin='lower',
+                extent=[float(be_values.max()), float(be_values.min()), 0, num_sweeps],
+                cmap=cmap_name)
+
+        self.parent.ax.set_ylim(0, num_sweeps)
+        self.parent.ax.set_xlabel('Binding Energy (eV)', fontsize=getattr(self.parent, 'axis_title_size', 10))
+        self.parent.ax.set_ylabel('Sweep Number', fontsize=getattr(self.parent, 'axis_title_size', 10))
+        self.parent.ax.tick_params(axis='both', labelsize=getattr(self.parent, 'axis_number_size', 9))
+
+        # Get a friendly title
+        base_name = (map_data.get('_core_level', '')
+                     or map_data.get('ExperimentalInfo', {}).get('Core Level', '')
+                     or map_sheet_name)
+        self.parent.ax.set_title(f'XPS Map \u2013 {base_name}',
+                                 fontsize=getattr(self.parent, 'axis_title_size', 11))
+
+        # Create colorbar at a FIXED position using cax= (same approach as plot_heatmap).
+        # Using ax= would cause matplotlib to shrink self.parent.ax on every call,
+        # producing the narrowing-map bug seen when pressing F4 repeatedly.
+        try:
+            cbar_ax = self.parent.figure.add_axes([0.84, 0.1, 0.03, 0.85])
+            cbar = self.parent.figure.colorbar(heatmap_img, cax=cbar_ax)
+            cbar.set_label('Intensity', rotation=270, labelpad=20,
+                           fontsize=getattr(self.parent, 'axis_title_size', 9))
+            cbar.ax.tick_params(labelsize=getattr(self.parent, 'axis_number_size', 9))
+            self.parent.heatmap_colorbar = cbar
+            self.parent.heatmap_cbar_ax = cbar_ax
+        except Exception:
+            self.parent.heatmap_colorbar = None
+
+        # Re-assert the axes position after colorbar creation (belt-and-braces)
+        self.parent.ax.set_position([0.1, 0.1, 0.73, 0.85])
+
+        # Store reference so save_plot_to_excel can detect the active XPS~Map
+        self.parent.xps_map_on_main = map_sheet_name
+        self.parent.xps_map_figure_data = {
+            'be_values': be_values,
+            'data_2d': data_2d,
+            'num_sweeps': num_sweeps,
+            'cmap': cmap_name,
+        }
+
+        # Update combobox so the sheet is known
+        self.parent.sheet_combobox.SetValue(map_sheet_name)
+
+        self.parent.canvas.draw_idle()
 
     def plot_heatmap(self, sheet_names):
         """Create a 2D heatmap plot of the selected sheets"""
@@ -6911,6 +7158,41 @@ class FileManagerWindow(wx.Frame):
 
         wx.MessageBox(f"Created map: {map_sheet_name}\nCore Level: {base_name}\nSweeps: {num_sweeps}",
                       "XPS~Map Created", wx.OK | wx.ICON_INFORMATION)
+
+    def on_open_scienta_map_viewer(self, event):
+        """
+        Open the ScientaMapViewer for the currently selected XPS~Map sheet.
+        Triggered by the Map Viewer icon on the vertical toolbar.
+        """
+        sheet_names = self.get_selected_sheet_names()
+
+        # Find the first XPS~Map in the selection (or cursor cell)
+        map_sheet_name = None
+        for name in sheet_names:
+            if name.startswith('XPS~Map'):
+                map_sheet_name = name
+                break
+
+        if map_sheet_name is None:
+            self.parent.show_popup_message2(
+                "No XPS~Map Selected",
+                "Please select an XPS~Map cell in the grid before opening the Map Viewer."
+            )
+            return
+
+        # If a viewer is already open for this map, just raise it
+        if hasattr(self.parent, 'scienta_map_window') and self.parent.scienta_map_window:
+            try:
+                if not self.parent.scienta_map_window.IsBeingDeleted():
+                    self.parent.scienta_map_window.Raise()
+                    return
+            except Exception:
+                pass
+
+        from libraries.ViewMenu.ScientaMapViewer import open_scienta_map_viewer
+        map_window = open_scienta_map_viewer(self.parent, map_sheet_name)
+        if map_window:
+            self.parent.scienta_map_window = map_window
 
     def _add_map_sheet_to_excel(self, map_sheet_name, map_data, source_sheets):
         """Add map sheet to Excel file matching Scienta_Import format."""
@@ -8206,6 +8488,3 @@ class FileManagerDropTarget(wx.FileDropTarget):
 
         # Copy data validation
         target_sheet.data_validations = copy(source_sheet.data_validations)
-        
-
-
