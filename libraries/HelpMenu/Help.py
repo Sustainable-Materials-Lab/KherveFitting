@@ -60,7 +60,7 @@ def on_about(self, event):
 
     name = wx.StaticText(panel, label="KherveFitting")
     name.SetFont(wx.Font(14, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-    version = wx.StaticText(panel, label="Version 1.7 Dec 25")
+    version = wx.StaticText(panel, label="Version 1.75 Mar 26")
     paper = wx.adv.HyperlinkCtrl(panel, -1, "DOI: 10.1002/sia.70032", "https://doi.org/10.1002/sia.70032")
     button_grid = wx.GridBagSizer(2, 2)
     libraries_button = wx.Button(panel, label="Libraries Used")
@@ -420,20 +420,23 @@ Philosophy:
 -v1.4 Feb-25  - Towards Mac Version
 -v1.5 May-25  - Towards multi-samples 2D-Manager
 -v1.6 Aug-25  - Towards opening/saving fitted CasaXPS / Better Background management
--v1.7 Nov-25  - Automatic Survey identification / batch fitting / Profile manager
--v1.8 Jan-26  - Fitting of Entities or Shapes / PCA tool
--v1.9 xxx-26  - Towards Linux Version (Synchrotron)
+-v1.65 Nov-25  - Automatic Survey identification / batch fitting / Profile manager
+-v1.70 Jan-26  - Fitting of Entities or Shapes / PCA tool
+-v1.75 Mar-26  - Improve Mapping
+
 
 Version 1.700-1.790
+- Improve Mapping, Mapping creation and saving
 - Improve import of Phi Data
 - Improve import of ScientaOmicron Data
-- Improve Thermo Avantage import data
+- Improve Thermo Avantage import AVG Data
 - Possibility to import Thermo VGD files
 - Improve Generic excel import
 - Added XAS technique
-- Added EDX technique
-- Added EELS technique
 - Added possibility of importing  maps 
+- Improve KherveDB and Survey ID
+- Create Active Shirley and Tougaard
+- Fitting of Entities
 
 Version 1.600-1.690
 - Added Principal Component Analysis (PCA) tool
