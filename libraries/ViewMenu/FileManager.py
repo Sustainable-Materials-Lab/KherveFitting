@@ -2013,8 +2013,9 @@ class FileManagerWindow(wx.Frame):
         linewidth = getattr(self.parent, 'multiplot_linewidth', 1.0)
 
         # Get colors from palette
+        import matplotlib
         import matplotlib.cm as cm
-        cmap = cm.get_cmap(palette)
+        cmap = matplotlib.colormaps.get_cmap(palette)
         num_sheets = len(sheet_names)
 
         # Store the original residuals state
@@ -3808,8 +3809,9 @@ class FileManagerWindow(wx.Frame):
         linewidth = getattr(self.parent, 'multiplot_linewidth', 1.0)
 
         # Get colors from palette
+        import matplotlib
         import matplotlib.cm as cm
-        cmap = cm.get_cmap(palette)
+        cmap = matplotlib.colormaps.get_cmap(palette)
         num_sheets = len(sheet_names)
 
         # Clear heatmap data when switching to regular plot
@@ -3900,7 +3902,7 @@ class FileManagerWindow(wx.Frame):
             if sheet_name in self.parent.Data['Core levels']:
                 core_level = self.parent.Data['Core levels'][sheet_name]
                 x_values = core_level['B.E.']
-                y_values = np.array(core_level['Raw Data'])                     
+                y_values = np.array(core_level['Raw Data'])
 
                 # Update min/max x values
                 x_min = min(x_min, min(x_values))
@@ -6492,9 +6494,10 @@ class FileManagerWindow(wx.Frame):
         self.parent.ax.set_position([0.1, 0.125, 0.85, 0.85])
 
         # --- colour palette ---
+        import matplotlib
         import matplotlib.cm as cm
         palette = getattr(self.parent, 'multiplot_palette', 'tab10')
-        cmap_lines = cm.get_cmap(palette)
+        cmap_lines = matplotlib.colormaps.get_cmap(palette)
         linewidth = getattr(self.parent, 'multiplot_linewidth', 1.0)
 
         # --- compute offset step from the first sweep's range ---
@@ -6686,12 +6689,13 @@ class FileManagerWindow(wx.Frame):
 
     def plot_heatmap(self, sheet_names):
         """Create a 2D heatmap plot of the selected sheets"""
+        import matplotlib
         import matplotlib.pyplot as plt
         from matplotlib.colors import LinearSegmentedColormap
 
         # Use selected colormap if available
         cmap_name = getattr(self.parent, 'heatmap_colormap', 'viridis')
-        cmap = plt.get_cmap(cmap_name)
+        cmap = matplotlib.colormaps.get_cmap(cmap_name)
 
         # Clear the plot
         self.parent.ax.clear()
@@ -6869,11 +6873,12 @@ class FileManagerWindow(wx.Frame):
         self.parent.ax.set_position([0.1, 0.1, 0.73, 0.85])
 
         # Plot heatmap
+        import matplotlib
         import matplotlib.pyplot as plt
 
         # Use selected colormap if available
         cmap_name = getattr(self.parent, 'heatmap_colormap', 'viridis')
-        cmap = plt.get_cmap(cmap_name)
+        cmap = matplotlib.colormaps.get_cmap(cmap_name)
 
         X, Y = np.meshgrid(self.parent.heatmap_be, np.arange(len(self.parent.heatmap_sheets)))
 
