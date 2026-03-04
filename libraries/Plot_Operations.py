@@ -1603,6 +1603,108 @@ class PlotManager:
         return True
 
 
+    def _plot_xps_map_heatmap(self, window, map_sheet_name):
+        """
+        Plot any *~Map sheet (XPS~Map, C1s~Map, etc.) as a 2D heatmap on the main window.
+        Called from clear_and_replot when the combobox selects a ~Map sheet.
+        Uses the same fixed-colorbar approach as FileManager.plot_xps_map_on_main to
+        prevent axes shrinkage on repeated calls.
+        """
+        import numpy as np
+
+        map_data = window.Data['Core levels'].get(map_sheet_name, {})
+        be_values = np.array(map_data.get('B.E.', []))
+        num_sweeps = map_data.get('_num_sweeps', 0)
+        if num_sweeps == 0:
+            num_sweeps = sum(1 for k in map_data if k.startswith('Y') and k[1:].isdigit())
+
+        if num_sweeps == 0 or len(be_values) == 0:
+            self.ax.clear()
+            self.ax.text(0.5, 0.5, f'{map_sheet_name}\n\nNo map data available',
+                         ha='center', va='center', transform=self.ax.transAxes,
+                         fontsize=12, color='gray')
+            self.ax.set_xticks([])
+            self.ax.set_yticks([])
+            self.canvas.draw_idle()
+            return
+
+        # Build 2D array (num_sweeps × num_be_points)
+        data_2d = np.zeros((num_sweeps, len(be_values)))
+        for i in range(num_sweeps):
+            col_name = f'Y{i + 1}'
+            if col_name in map_data:
+                data_2d[i, :] = np.array(map_data[col_name])
+
+        # --- clear axes and any existing colorbar ---
+        self.ax.clear()
+        if hasattr(window, 'heatmap_colorbar') and window.heatmap_colorbar is not None:
+            try:
+                if hasattr(window.heatmap_colorbar, 'ax'):
+                    window.figure.delaxes(window.heatmap_colorbar.ax)
+                window.heatmap_colorbar = None
+            except Exception:
+                pass
+        if hasattr(self, 'residuals_subplot') and self.residuals_subplot:
+            try:
+                window.figure.delaxes(self.residuals_subplot)
+            except Exception:
+                pass
+            self.residuals_subplot = None
+            self.ax.get_xaxis().set_visible(True)
+
+        # Pin axes to fixed position before drawing
+        self.ax.set_position([0.1, 0.1, 0.73, 0.85])
+
+        # --- draw heatmap ---
+        cmap_name = getattr(window, 'heatmap_colormap', 'viridis')
+        be_descending = be_values[0] > be_values[-1] if len(be_values) > 1 else False
+
+        if be_descending:
+            heatmap_img = self.ax.imshow(
+                data_2d, aspect='auto', origin='lower',
+                extent=[float(be_values[0]), float(be_values[-1]), 0, num_sweeps],
+                cmap=cmap_name)
+        else:
+            data_flipped = np.fliplr(data_2d)
+            heatmap_img = self.ax.imshow(
+                data_flipped, aspect='auto', origin='lower',
+                extent=[float(be_values.max()), float(be_values.min()), 0, num_sweeps],
+                cmap=cmap_name)
+
+        self.ax.set_ylim(0, num_sweeps)
+        self.ax.set_xlabel('Binding Energy (eV)',
+                           fontsize=getattr(window, 'axis_title_size', 10))
+        self.ax.set_ylabel('Sweep Number',
+                           fontsize=getattr(window, 'axis_title_size', 10))
+        self.ax.tick_params(axis='both',
+                            labelsize=getattr(window, 'axis_number_size', 9))
+
+        base_name = (map_data.get('_core_level', '')
+                     or map_data.get('ExperimentalInfo', {}).get('Core Level', '')
+                     or map_sheet_name)
+        self.ax.set_title(f'XPS Map \u2013 {base_name}',
+                          fontsize=getattr(window, 'axis_title_size', 11))
+
+        # Fixed-position colorbar (avoids axes-shrink bug from ax= form)
+        try:
+            cbar_ax = window.figure.add_axes([0.84, 0.1, 0.03, 0.85])
+            cbar = window.figure.colorbar(heatmap_img, cax=cbar_ax)
+            cbar.set_label('Intensity', rotation=270, labelpad=20,
+                           fontsize=getattr(window, 'axis_title_size', 9))
+            cbar.ax.tick_params(labelsize=getattr(window, 'axis_number_size', 9))
+            window.heatmap_colorbar = cbar
+            window.heatmap_cbar_ax = cbar_ax
+        except Exception:
+            window.heatmap_colorbar = None
+
+        # Re-assert position after colorbar creation
+        self.ax.set_position([0.1, 0.1, 0.73, 0.85])
+
+        # Mark that this map is currently displayed so save_plot_to_excel can detect it
+        window.xps_map_on_main = map_sheet_name
+
+        self.canvas.draw_idle()
+
     def clear_and_replot(self, window):
         """
         Clears the current plot and redraws all elements for the selected sheet.
@@ -1702,6 +1804,11 @@ class PlotManager:
             self.ax.set_xticks([])
             self.ax.set_yticks([])
             self.canvas.draw_idle()
+            return
+
+        # Handle any *~Map sheet (XPS~Map, C1s~Map, etc.) — plot as 2D heatmap on main window
+        if '~Map' in sheet_name and sheet_name not in ('EDX~Map', 'EELS~Map'):
+            self._plot_xps_map_heatmap(window, sheet_name)
             return
 
         # CHECK IF THIS IS A PROFILE SHEET - if so, use profile plotting
@@ -4572,6 +4679,3 @@ class PlotManager:
             return False
 
     #STart
-
-
-

@@ -1791,6 +1791,47 @@ class MouseEventHandler:
                 # Colormap submenu
                 colormap_submenu = wx.Menu()
 
+                # Gradient colormaps (matching multiplot gradient style)
+                gradient_menu = wx.Menu()
+
+                item = gradient_menu.Append(wx.ID_ANY, "Gradient Blue")
+                self.window.Bind(wx.EVT_MENU, lambda evt: self.window.set_heatmap_colormap('Blues'), item)
+
+                item = gradient_menu.Append(wx.ID_ANY, "Gradient Green")
+                self.window.Bind(wx.EVT_MENU, lambda evt: self.window.set_heatmap_colormap('Greens'), item)
+
+                item = gradient_menu.Append(wx.ID_ANY, "Gradient Red")
+                self.window.Bind(wx.EVT_MENU, lambda evt: self.window.set_heatmap_colormap('Reds'), item)
+
+                item = gradient_menu.Append(wx.ID_ANY, "Gradient Purple")
+                self.window.Bind(wx.EVT_MENU, lambda evt: self.window.set_heatmap_colormap('Purples'), item)
+
+                item = gradient_menu.Append(wx.ID_ANY, "Gradient Pink")
+                self.window.Bind(wx.EVT_MENU, lambda evt: self.window.set_heatmap_colormap('RdPu'), item)
+
+                item = gradient_menu.Append(wx.ID_ANY, "Gradient Orange")
+                self.window.Bind(wx.EVT_MENU, lambda evt: self.window.set_heatmap_colormap('Oranges'), item)
+
+                item = gradient_menu.Append(wx.ID_ANY, "Gradient Yellow")
+                self.window.Bind(wx.EVT_MENU, lambda evt: self.window.set_heatmap_colormap('YlOrBr'), item)
+
+                item = gradient_menu.Append(wx.ID_ANY, "Gradient Brown")
+                self.window.Bind(wx.EVT_MENU, lambda evt: self.window.set_heatmap_colormap('YlOrBr'), item)
+
+                item = gradient_menu.Append(wx.ID_ANY, "Gradient Grey")
+                self.window.Bind(wx.EVT_MENU, lambda evt: self.window.set_heatmap_colormap('Greys'), item)
+
+                item = gradient_menu.Append(wx.ID_ANY, "Gradient Dark Grey")
+                self.window.Bind(wx.EVT_MENU, lambda evt: self.window.set_heatmap_colormap('gray'), item)
+
+                item = gradient_menu.Append(wx.ID_ANY, "Gradient Black")
+                self.window.Bind(wx.EVT_MENU, lambda evt: self.window.set_heatmap_colormap('binary'), item)
+
+                item = gradient_menu.Append(wx.ID_ANY, "Gradient Cyan")
+                self.window.Bind(wx.EVT_MENU, lambda evt: self.window.set_heatmap_colormap('GnBu'), item)
+
+                colormap_submenu.AppendSubMenu(gradient_menu, "Gradient")
+
                 # Sequential colormaps
                 seq_menu = wx.Menu()
                 seq_maps = ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'rocket', 'mako']

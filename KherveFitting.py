@@ -3932,10 +3932,27 @@ class MyFrame(wx.Frame):
 
     def set_heatmap_colormap(self, colormap_name):
         """Set the heatmap colormap directly"""
+        self.heatmap_colormap = colormap_name
+
+        # Case 1: FileManager-created heatmap (F5 from core levels) — uses heatmap_data
         if hasattr(self, 'heatmap_data') and self.heatmap_data is not None:
-            self.heatmap_colormap = colormap_name
             if hasattr(self, 'file_manager') and self.file_manager is not None:
                 self.file_manager.refresh_heatmap()
+            return
+
+        # Case 2: ~Map sheet selected directly in combobox — plotted by PlotManager
+        sheet_name = self.sheet_combobox.GetValue()
+        if '~Map' in sheet_name and sheet_name not in ('EDX~Map', 'EELS~Map'):
+            if hasattr(self, 'plot_manager'):
+                self.plot_manager._plot_xps_map_heatmap(self, sheet_name)
+            return
+
+        # Case 3: ~Map sheet plotted via FileManager.plot_xps_map_on_main (F2/F4/toolbar)
+        xps_map = getattr(self, 'xps_map_on_main', None)
+        if xps_map and '~Map' in xps_map and xps_map not in ('EDX~Map', 'EELS~Map'):
+            if hasattr(self, 'file_manager') and self.file_manager is not None:
+                self.file_manager.plot_xps_map_on_main(xps_map)
+            return
 
     def smooth_heatmap(self, sigma):
         """Apply gaussian smoothing with specified sigma value"""

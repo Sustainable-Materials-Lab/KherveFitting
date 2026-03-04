@@ -671,6 +671,12 @@ def save_to_excel(window, data, file_path, sheet_name, update_console=None):
             return obj[key]
         return default
 
+    # Any ~Map sheet stores raw matrix data - never write peak fitting grid into them
+    if '~Map' in sheet_name:
+        if update_console:
+            update_console(f"Skipping peak grid write for map sheet: {sheet_name}")
+        return
+
     # Handle zzProfile sheets differently - just replace them completely
     if sheet_name.startswith('zzProfile'):
         if update_console:
@@ -1268,6 +1274,11 @@ def save_to_excel(window, data, file_path, sheet_name, update_console=None):
             # Remove border from first row
             workbook = writer.book
             worksheet = workbook[sheet_name]
+
+            # Never apply peak fitting grid / green header styling to any ~Map sheet
+            if '~Map' in sheet_name:
+                return
+
             for cell in worksheet[1]:
                 cell.border = openpyxl.styles.Border(
                     left=openpyxl.styles.Side(style=None),
@@ -1749,59 +1760,140 @@ def save_plot_to_excel(window, update_console=None):
                               "Info", wx.OK | wx.ICON_INFORMATION)
             return
 
-        # Handle XPS~Map - save the heatmap currently shown on the main window
-        # The map is plotted via FileManager.plot_xps_map_on_main onto window.figure/window.ax
-        is_xps_map = sheet_name.startswith('XPS~Map')
+        # Handle XPS~Map - always render a fresh heatmap and rewrite BE/Y data in the sheet
+        is_xps_map = '~Map' in sheet_name
         if is_xps_map:
-            # Check that an XPS~Map is actually displayed on the main canvas
-            if not (hasattr(window, 'xps_map_on_main') and window.xps_map_on_main == sheet_name):
-                # Friendly reminder to plot the map first
-                if update_console:
-                    update_console(
-                        f"XPS~Map '{sheet_name}' is not currently shown on the main plot. "
-                        "Select it in the File Manager and press F2 / F4 or the Map icon to plot it first."
-                    )
-                else:
-                    wx.MessageBox(
-                        f"'{sheet_name}' is not currently displayed on the main plot.\n\n"
-                        "Please select the XPS~Map in the File Manager and press F2, F4, or "
-                        "the Map icon to display it first.",
-                        "XPS Map Not Displayed", wx.OK | wx.ICON_INFORMATION
-                    )
-                return
-
             try:
-                # Capture the current figure (which shows the XPS~Map heatmap)
+                import matplotlib.pyplot as plt
+
+                map_data = window.Data['Core levels'].get(sheet_name, {})
+                if not map_data:
+                    raise ValueError(f"No data found for sheet '{sheet_name}'")
+
+                # --- 1. Build arrays from window.Data (JSON) ---
+                be_values = np.array(map_data.get('B.E.', []))
+                num_sweeps = map_data.get('_num_sweeps', 0)
+                if num_sweeps == 0:
+                    num_sweeps = sum(1 for k in map_data if k.startswith('Y') and k[1:].isdigit())
+
+                if num_sweeps == 0 or len(be_values) == 0:
+                    raise ValueError(f"Invalid map data in '{sheet_name}'")
+
+                data_2d = np.zeros((num_sweeps, len(be_values)))
+                for i in range(num_sweeps):
+                    col_name = f'Y{i + 1}'
+                    if col_name in map_data:
+                        data_2d[i, :] = np.array(map_data[col_name])
+
+                cmap_name = getattr(window, 'heatmap_colormap', 'viridis')
+
+                # --- 2. Render a dedicated figure (never touches window.figure) ---
+                fig, ax = plt.subplots(figsize=(window.excel_width, window.excel_height))
+                be_descending = be_values[0] > be_values[-1] if len(be_values) > 1 else False
+                if be_descending:
+                    im = ax.imshow(data_2d, aspect='auto', origin='lower',
+                                   extent=[float(be_values[0]), float(be_values[-1]), 0, num_sweeps],
+                                   cmap=cmap_name)
+                else:
+                    data_flipped = np.fliplr(data_2d)
+                    im = ax.imshow(data_flipped, aspect='auto', origin='lower',
+                                   extent=[float(be_values.max()), float(be_values.min()), 0, num_sweeps],
+                                   cmap=cmap_name)
+
+                ax.set_xlabel('Binding Energy (eV)')
+                ax.set_ylabel('Sweep Number')
+                base_name = (map_data.get('_core_level', '')
+                             or map_data.get('ExperimentalInfo', {}).get('Core Level', '')
+                             or sheet_name)
+                ax.set_title(f'XPS Map \u2013 {base_name}')
+                fig.colorbar(im, ax=ax, label='Intensity')
+
                 buf = io.BytesIO()
-                original_size = window.figure.get_size_inches()
-                window.figure.set_size_inches(window.excel_width, window.excel_height)
-                window.figure.savefig(buf, format='png', dpi=window.excel_dpi, bbox_inches='tight')
-                window.figure.set_size_inches(original_size)
+                fig.savefig(buf, format='png', dpi=window.excel_dpi, bbox_inches='tight')
+                plt.close(fig)
                 buf.seek(0)
 
+                # --- 3. Rewrite BE/Y data columns in the XPS~Map sheet (cols A..num_sweeps+1) ---
+                #        Do NOT touch any columns beyond that (image anchor is D6 = col 4).
+                #        Since num_sweeps >= 3 the data already reaches col D+, so we only
+                #        write cols 1..(num_sweeps+1) and leave col (num_sweeps+2)+ untouched.
                 wb = openpyxl.load_workbook(file_path)
                 if sheet_name not in wb.sheetnames:
                     ws = wb.create_sheet(sheet_name)
                 else:
                     ws = wb[sheet_name]
 
-                # Add the image WITHOUT clearing existing data (matrix rows stay intact)
-                # Only replace any existing images
+                # Unmerge any merged cells so we can write freely
+                for merge in list(ws.merged_cells.ranges):
+                    ws.unmerge_cells(str(merge))
+
+                # Header row
+                ws.cell(row=1, column=1, value='BE')
+                for sweep_idx in range(num_sweeps):
+                    ws.cell(row=1, column=sweep_idx + 2, value=f'Y{sweep_idx + 1}')
+
+                # Data rows
+                for i, be in enumerate(be_values):
+                    ws.cell(row=i + 2, column=1, value=round(float(be), 2))
+                    for sweep_idx in range(num_sweeps):
+                        ws.cell(row=i + 2, column=sweep_idx + 2,
+                                value=round(float(data_2d[sweep_idx, i]), 2))
+
+                # --- 4. Place heatmap image at D6 (col 4, row 6) without touching data cols ---
                 ws._images = []
                 img = Image(buf)
                 ws.add_image(img, 'D6')
                 wb.save(file_path)
 
-                if update_console:
-                    update_console(f"XPS Map image saved to Excel under sheet: {sheet_name}")
+                # --- 5. Re-plot as heatmap on main window so it stays as map after saving ---
+                if hasattr(window, 'file_manager') and window.file_manager is not None:
+                    try:
+                        window.file_manager.plot_xps_map_on_main(sheet_name)
+                    except Exception:
+                        pass
                 else:
-                    window.show_popup_message2("XPS Map image saved to Excel", f"Under sheet: {sheet_name}")
+                    # Fallback: re-render directly onto window.ax
+                    window.ax.clear()
+                    if hasattr(window, 'heatmap_colorbar') and window.heatmap_colorbar is not None:
+                        try:
+                            window.figure.delaxes(window.heatmap_colorbar.ax)
+                        except Exception:
+                            pass
+                        window.heatmap_colorbar = None
+                    window.ax.set_position([0.1, 0.1, 0.73, 0.85])
+                    if be_descending:
+                        hm = window.ax.imshow(data_2d, aspect='auto', origin='lower',
+                                              extent=[float(be_values[0]), float(be_values[-1]), 0, num_sweeps],
+                                              cmap=cmap_name)
+                    else:
+                        data_flipped2 = np.fliplr(data_2d)
+                        hm = window.ax.imshow(data_flipped2, aspect='auto', origin='lower',
+                                              extent=[float(be_values.max()), float(be_values.min()), 0, num_sweeps],
+                                              cmap=cmap_name)
+                    window.ax.set_xlabel('Binding Energy (eV)')
+                    window.ax.set_ylabel('Sweep Number')
+                    window.ax.set_title(f'XPS Map \u2013 {base_name}')
+                    try:
+                        cbar_ax = window.figure.add_axes([0.84, 0.1, 0.03, 0.85])
+                        cbar = window.figure.colorbar(hm, cax=cbar_ax)
+                        cbar.set_label('Intensity', rotation=270, labelpad=20)
+                        window.heatmap_colorbar = cbar
+                    except Exception:
+                        pass
+                    window.ax.set_position([0.1, 0.1, 0.73, 0.85])
+                    window.xps_map_on_main = sheet_name
+                    window.canvas.draw_idle()
+
+                if update_console:
+                    update_console(f"XPS Map image and data saved to Excel under sheet: {sheet_name}")
+                else:
+                    window.show_popup_message2("XPS Map saved to Excel", f"Sheet: {sheet_name}")
                 return
 
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                error_msg = f"Error saving XPS Map image to Excel: {str(e)}"
+                error_msg = f"Error saving XPS Map to Excel: {str(e)}"
                 if update_console:
                     update_console(error_msg)
                 else:
