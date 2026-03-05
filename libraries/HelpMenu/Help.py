@@ -60,7 +60,7 @@ def on_about(self, event):
 
     name = wx.StaticText(panel, label="KherveFitting")
     name.SetFont(wx.Font(14, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-    version = wx.StaticText(panel, label="Version 1.75 Mar 26")
+    version = wx.StaticText(panel, label="Version 1.80 Mar 26")
     paper = wx.adv.HyperlinkCtrl(panel, -1, "DOI: 10.1002/sia.70032", "https://doi.org/10.1002/sia.70032")
     button_grid = wx.GridBagSizer(2, 2)
     libraries_button = wx.Button(panel, label="Libraries Used")
@@ -422,7 +422,7 @@ Philosophy:
 -v1.6 Aug-25  - Towards opening/saving fitted CasaXPS / Better Background management
 -v1.65 Nov-25  - Automatic Survey identification / batch fitting / Profile manager
 -v1.70 Jan-26  - Fitting of Entities or Shapes / PCA tool
--v1.75 Mar-26  - Improve Mapping
+-v1.80 Mar-26  - Improve Mapping
 
 
 Version 1.700-1.790

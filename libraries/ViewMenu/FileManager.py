@@ -214,23 +214,23 @@ class FileManagerWindow(wx.Frame):
         self.Bind(wx.EVT_TOOL, self.on_sum_selected, sum_tool)
 
         # Create Map button
-        map_icon = os.path.join(icon_path, "heatmap-3.png")
+        map_icon = os.path.join(icon_path, "heatmap_create-3.png")
         if os.path.exists(map_icon):
             map_bmp = wx.Bitmap(map_icon)
         else:
             map_bmp = wx.ArtProvider.GetBitmap(wx.ART_FIND, wx.ART_TOOLBAR)
         map_tool = self.v_toolbar.AddTool(wx.ID_ANY, "Create Map", map_bmp,
-                                         "Create XPS~Map from selected core levels")
+                                         "Create Map from selected core levels")
         self.Bind(wx.EVT_TOOL, self.on_create_map_from_selection, map_tool)
 
         # Open ScientaMapViewer button (same icon as Create Map)
-        scienta_map_icon = os.path.join(icon_path, "heatmap-3.png")
+        scienta_map_icon = os.path.join(icon_path, "heatmap_Edit-3.png")
         if os.path.exists(scienta_map_icon):
             scienta_map_bmp = wx.Bitmap(scienta_map_icon)
         else:
             scienta_map_bmp = wx.ArtProvider.GetBitmap(wx.ART_FIND, wx.ART_TOOLBAR)
         scienta_map_tool = self.v_toolbar.AddTool(wx.ID_ANY, "Open Map Viewer", scienta_map_bmp,
-                                                  "Open ScientaMapViewer for the selected XPS~Map")
+                                                  "Edit Map for the selected xxx~Map")
         self.Bind(wx.EVT_TOOL, self.on_open_scienta_map_viewer, scienta_map_tool)
 
 
@@ -1217,6 +1217,8 @@ class FileManagerWindow(wx.Frame):
 
         # If the single selected sheet is an XPS~Map, plot all sweep lines (overlay)
         if sheet_names and len(sheet_names) == 1 and sheet_names[0].startswith('XPS~Map'):
+            # F2 resets the map offset multiplier
+            self.map_offset_multiplier = 1
             self.plot_xps_map_lines(sheet_names[0], offset=False)
             self.highlight_current_sheet(sheet_names[0])
             self.Raise()
@@ -4081,8 +4083,19 @@ class FileManagerWindow(wx.Frame):
         """Plot the currently selected core level(s) with offset"""
         sheet_names = self.get_selected_sheet_names()
 
-        # If the single selected sheet is an XPS~Map, plot all sweep lines with offset
+        # If the single selected sheet is an XPS~Map, plot all sweep lines with offset.
+        # Repeated F3 presses increase the offset multiplier; F2 resets it.
         if sheet_names and len(sheet_names) == 1 and sheet_names[0].startswith('XPS~Map'):
+            import time
+            current_time = time.time()
+            last_map_sheet = getattr(self, 'last_map_offset_sheet', None)
+            last_map_time = getattr(self, 'last_map_offset_time', 0)
+            if last_map_sheet == sheet_names[0] and (current_time - last_map_time) < self.rapid_press_threshold:
+                self.map_offset_multiplier = getattr(self, 'map_offset_multiplier', 1) + 1
+            else:
+                self.map_offset_multiplier = 1
+            self.last_map_offset_sheet = sheet_names[0]
+            self.last_map_offset_time = current_time
             self.plot_xps_map_lines(sheet_names[0], offset=True)
             self.highlight_current_sheet(sheet_names[0])
             self.Raise()
@@ -6500,10 +6513,38 @@ class FileManagerWindow(wx.Frame):
         cmap_lines = matplotlib.colormaps.get_cmap(palette)
         linewidth = getattr(self.parent, 'multiplot_linewidth', 1.0)
 
-        # --- compute offset step from the first sweep's range ---
-        y0 = np.array(map_data.get('Y1', []))
-        if len(y0) > 0 and offset:
-            step = (y0.max() - y0.min()) * getattr(self, 'offset_multiplier', 1)
+        norm_mode = self.norm_type.GetValue()
+
+        # Collect and optionally normalise all sweeps to 0-1000
+        sweep_data = []
+        for i in range(num_sweeps):
+            col_name = f'Y{i + 1}'
+            if col_name not in map_data:
+                sweep_data.append(None)
+                continue
+            y = np.array(map_data[col_name], dtype=float)
+            if norm_mode == "Norm. Auto":
+                y_min, y_max = y.min(), y.max()
+                if y_max - y_min > 0:
+                    y = (y - y_min) / (y_max - y_min) * 1000.0
+                else:
+                    y = np.full_like(y, 500.0)
+            sweep_data.append(y)
+
+        # Offset step: 10% of the normalised range per multiplier tick
+        # For Norm. Auto data spans 0-1000, so base step = 100.
+        # For raw data, base step = 10% of first sweep's range.
+        if offset:
+            valid = [s for s in sweep_data if s is not None]
+            if valid:
+                if norm_mode == "Norm. Auto":
+                    base_step = 100.0
+                else:
+                    r = valid[0]
+                    base_step = (r.max() - r.min()) * 0.1 if r.max() - r.min() > 0 else 1.0
+                step = base_step * getattr(self, 'map_offset_multiplier', 1)
+            else:
+                step = 0.0
         else:
             step = 0.0
 
@@ -6512,13 +6553,10 @@ class FileManagerWindow(wx.Frame):
 
         max_legend = getattr(self.parent, 'multiplot_max_legend_items', 10)
 
-        for i in range(num_sweeps):
-            col_name = f'Y{i + 1}'
-            if col_name not in map_data:
+        for i, y_values in enumerate(sweep_data):
+            if y_values is None:
                 continue
-            y_values = np.array(map_data[col_name], dtype=float)
             y_plot = y_values + i * step
-
             color_value = 0.1 + 0.65 * i / max(num_sweeps - 1, 1)
             color = cmap_lines(color_value)
             label = f'Sweep {i + 1}' if num_sweeps <= max_legend else None
@@ -6532,8 +6570,15 @@ class FileManagerWindow(wx.Frame):
 
         self.parent.ax.set_xlabel('Binding Energy (eV)',
                                   fontsize=getattr(self.parent, 'axis_title_size', 10))
-        self.parent.ax.set_ylabel('Intensity (CPS)',
-                                  fontsize=getattr(self.parent, 'axis_title_size', 10))
+        if norm_mode == "Norm. Auto":
+            if offset and step > 0:
+                mult = getattr(self, 'map_offset_multiplier', 1)
+                ylabel = f'Norm. Intensity 0-1000 (offset×{mult})'
+            else:
+                ylabel = 'Norm. Intensity (0-1000)'
+        else:
+            ylabel = 'Intensity (CPS)'
+        self.parent.ax.set_ylabel(ylabel, fontsize=getattr(self.parent, 'axis_title_size', 10))
         self.parent.ax.tick_params(axis='both',
                                    labelsize=getattr(self.parent, 'axis_number_size', 9))
 
@@ -6591,11 +6636,19 @@ class FileManagerWindow(wx.Frame):
             return
 
         # Build 2D data array (num_sweeps × num_be_points)
+        norm_mode = self.norm_type.GetValue()
         data_2d = np.zeros((num_sweeps, len(be_values)))
         for i in range(num_sweeps):
             col_name = f'Y{i + 1}'
             if col_name in map_data:
-                data_2d[i, :] = np.array(map_data[col_name])
+                row = np.array(map_data[col_name], dtype=float)
+                if norm_mode == "Norm. Auto":
+                    r_min, r_max = row.min(), row.max()
+                    if r_max - r_min > 0:
+                        row = (row - r_min) / (r_max - r_min) * 1000.0
+                    else:
+                        row = np.full_like(row, 500.0)
+                data_2d[i, :] = row
 
         # Use whichever colormap the user has set (default viridis)
         cmap_name = getattr(self.parent, 'heatmap_colormap', 'viridis')
@@ -6632,17 +6685,19 @@ class FileManagerWindow(wx.Frame):
         extent_x0 = float(be_values[0])
         extent_x1 = float(be_values[-1])
 
+        vmin_h = 0 if norm_mode == "Norm. Auto" else data_2d.min()
+        vmax_h = 1000.0 if norm_mode == "Norm. Auto" else data_2d.max()
         if be_descending:
             heatmap_img = self.parent.ax.imshow(
                 data_2d, aspect='auto', origin='lower',
                 extent=[extent_x0, extent_x1, 0, num_sweeps],
-                cmap=cmap_name)
+                cmap=cmap_name, vmin=vmin_h, vmax=vmax_h)
         else:
             data_flipped = np.fliplr(data_2d)
             heatmap_img = self.parent.ax.imshow(
                 data_flipped, aspect='auto', origin='lower',
                 extent=[float(be_values.max()), float(be_values.min()), 0, num_sweeps],
-                cmap=cmap_name)
+                cmap=cmap_name, vmin=vmin_h, vmax=vmax_h)
 
         self.parent.ax.set_ylim(0, num_sweeps)
         self.parent.ax.set_xlabel('Binding Energy (eV)', fontsize=getattr(self.parent, 'axis_title_size', 10))
@@ -6662,7 +6717,8 @@ class FileManagerWindow(wx.Frame):
         try:
             cbar_ax = self.parent.figure.add_axes([0.84, 0.1, 0.03, 0.85])
             cbar = self.parent.figure.colorbar(heatmap_img, cax=cbar_ax)
-            cbar.set_label('Intensity', rotation=270, labelpad=20,
+            cbar_label = 'Normalised Intensity (0-1)' if norm_mode == "Norm. Auto" else 'Intensity (CPS)'
+            cbar.set_label(cbar_label, rotation=270, labelpad=20,
                            fontsize=getattr(self.parent, 'axis_title_size', 9))
             cbar.ax.tick_params(labelsize=getattr(self.parent, 'axis_number_size', 9))
             self.parent.heatmap_colorbar = cbar
@@ -6794,29 +6850,35 @@ class FileManagerWindow(wx.Frame):
         # Final safety check for NaN/Inf
         heatmap_data = np.nan_to_num(heatmap_data, nan=0.0, posinf=0.0, neginf=0.0)
 
-        # Normalize each row (spectrum) individually to 0-1 range
-        normalized_data = np.zeros_like(heatmap_data)
-        for i in range(heatmap_data.shape[0]):
-            row_min = heatmap_data[i, :].min()
-            row_max = heatmap_data[i, :].max()
-            if row_max - row_min > 0:
-                normalized_data[i, :] = (heatmap_data[i, :] - row_min) / (row_max - row_min)
-            else:
-                normalized_data[i, :] = 0.5
+        # Normalise or keep raw depending on combo selection
+        norm_mode = self.norm_type.GetValue()
+        if norm_mode == "Norm. Auto":
+            display_data = np.zeros_like(heatmap_data)
+            for i in range(heatmap_data.shape[0]):
+                row_min = heatmap_data[i, :].min()
+                row_max = heatmap_data[i, :].max()
+                if row_max - row_min > 0:
+                    display_data[i, :] = (heatmap_data[i, :] - row_min) / (row_max - row_min) * 1000.0
+                else:
+                    display_data[i, :] = 500.0
+        else:
+            display_data = heatmap_data.copy()
 
-        # Store normalized data and sheet names for replotting
-        self.parent.heatmap_data = normalized_data
-        self.parent.heatmap_data_original = normalized_data.copy()  # ADD THIS LINE
+        # Store data and sheet names for replotting
+        self.parent.heatmap_data = display_data
+        self.parent.heatmap_data_original = display_data.copy()
         self.parent.heatmap_be = common_be
         self.parent.heatmap_labels = labels
         self.parent.heatmap_sheets = sheet_names
         self.parent.heatmap_be_increasing = be_increasing
 
-        # Plot heatmap using pcolormesh with normalized data
+        # Plot heatmap using pcolormesh
         X, Y = np.meshgrid(common_be, np.arange(len(sheet_names)))
 
-        im = self.parent.ax.pcolormesh(X, Y, normalized_data, shading='auto', cmap=cmap,
-                                       vmin=0, vmax=self.parent.heatmap_vmax)
+        vmin = 0 if norm_mode == "Norm. Auto" else display_data.min()
+        vmax = 1000.0 * self.parent.heatmap_vmax if norm_mode == "Norm. Auto" else display_data.max()
+        im = self.parent.ax.pcolormesh(X, Y, display_data, shading='auto', cmap=cmap,
+                                       vmin=vmin, vmax=vmax)
 
         # Create colorbar with fixed axes to prevent shrinking
         self.parent.ax.set_position([0.1, 0.1, 0.73, 0.85])
@@ -6824,7 +6886,8 @@ class FileManagerWindow(wx.Frame):
         # Create colorbar axes manually at fixed position [left, bottom, width, height]
         cbar_ax = self.parent.figure.add_axes([0.84, 0.1, 0.03, 0.85])
         cbar = self.parent.figure.colorbar(im, cax=cbar_ax)
-        cbar.set_label('Normalized Intensity (0-1)', rotation=270, labelpad=20,
+        cbar_label = 'Normalised Intensity (0-1)' if norm_mode == "Norm. Auto" else 'Intensity (CPS)'
+        cbar.set_label(cbar_label, rotation=270, labelpad=20,
                        fontsize=self.parent.axis_title_size)
         cbar.ax.tick_params(labelsize=self.parent.axis_number_size)
 
@@ -7154,15 +7217,30 @@ class FileManagerWindow(wx.Frame):
                                   for i in range(self.parent.sheet_combobox.GetCount())]:
             self.parent.sheet_combobox.Append(map_sheet_name)
 
-        # Refresh grid
-        self.populate_grid()
-
         # Save state
         from libraries.FileMenu.Save import save_state
         save_state(self.parent)
 
         wx.MessageBox(f"Created map: {map_sheet_name}\nCore Level: {base_name}\nSweeps: {num_sweeps}",
                       "XPS~Map Created", wx.OK | wx.ICON_INFORMATION)
+
+        # Close and reopen FileManager at the same desktop position so the new XPS~Map cell appears
+        current_position = self.GetPosition()
+        self.parent.file_manager_position = current_position
+        self.save_sample_names()
+        self.save_be_corrections()
+
+        def reopen():
+            if hasattr(self.parent, 'file_manager') and self.parent.file_manager:
+                self.parent.file_manager.Destroy()
+                self.parent.file_manager = None
+            new_fm = FileManagerWindow(self.parent)
+            self.parent.file_manager = new_fm
+            new_fm.Show()
+            # Highlight the newly created map sheet
+            new_fm.highlight_current_sheet(map_sheet_name)
+
+        wx.CallAfter(reopen)
 
     def on_open_scienta_map_viewer(self, event):
         """

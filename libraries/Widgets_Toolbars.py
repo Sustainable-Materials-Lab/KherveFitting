@@ -867,13 +867,13 @@ def create_menu(window):
     Import_Other_header = import_menu.Append(wx.ID_ANY, "▬▬▬▬▬▬▬▬ Other Techniques ▬▬▬▬▬▬▬▬▬")
     Import_Other_header.Enable(False)
 
-    # Raman submenu
-    raman_menu = wx.Menu()
-    import_raman_item = raman_menu.Append(wx.NewId(), "File (.txt)")
-    window.Bind(wx.EVT_MENU, lambda event: import_raman_txt_file(window), import_raman_item)
-    import_multiple_raman_item = raman_menu.Append(wx.NewId(), "Multiple files (folder)")
-    window.Bind(wx.EVT_MENU, lambda event: import_multiple_raman_files(window), import_multiple_raman_item)
-    import_menu.AppendSubMenu(raman_menu, "Raman")
+    # # Raman submenu
+    # raman_menu = wx.Menu()
+    # import_raman_item = raman_menu.Append(wx.NewId(), "File (.txt)")
+    # window.Bind(wx.EVT_MENU, lambda event: import_raman_txt_file(window), import_raman_item)
+    # import_multiple_raman_item = raman_menu.Append(wx.NewId(), "Multiple files (folder)")
+    # window.Bind(wx.EVT_MENU, lambda event: import_multiple_raman_files(window), import_multiple_raman_item)
+    # import_menu.AppendSubMenu(raman_menu, "Raman")
 
     # XAS Diamond-B07 submenu
     from libraries.FileMenu.XAS_Import import import_xas_file, import_multiple_xas_files
