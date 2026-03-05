@@ -3492,7 +3492,7 @@ class MyFrame(wx.Frame):
                 self.multiplot_linewidth = config.get('multiplot_linewidth', 1.0)
                 self.multiplot_legend_ncol = config.get('multiplot_legend_ncol', 2)
                 self.multiplot_max_legend_items = config.get('multiplot_max_legend_items', 10)
-
+                self.heatmap_colormap = config.get('heatmap_colormap', 'Greens')
                 self.edx_plot_style = config.get('edx_plot_style', 'black')
                 print(f"DEBUG: Loaded edx_plot_style = {self.edx_plot_style}")
 
@@ -3625,7 +3625,7 @@ class MyFrame(wx.Frame):
             'multiplot_linewidth': self.multiplot_linewidth,
             'multiplot_legend_ncol': self.multiplot_legend_ncol,
             'multiplot_max_legend_items': self.multiplot_max_legend_items,
-
+            'heatmap_colormap': getattr(self, 'heatmap_colormap', 'Greens'),
             'edx_plot_style': self.edx_plot_style,
 
             #Tines opened
@@ -3933,6 +3933,11 @@ class MyFrame(wx.Frame):
     def set_heatmap_colormap(self, colormap_name):
         """Set the heatmap colormap directly"""
         self.heatmap_colormap = colormap_name
+
+        try:
+            self.save_config()
+        except Exception as e:
+            print(f"Error saving heatmap colormap config: {e}")
 
         # Case 1: FileManager-created heatmap (F5 from core levels) — uses heatmap_data
         if hasattr(self, 'heatmap_data') and self.heatmap_data is not None:
@@ -4424,11 +4429,11 @@ if __name__ == '__main__':
     # Create main frame
     splash.update_message("Building Main Application Window...")
     if os_name == "Darwin":
-        frame = MyFrame(None, "KherveFitting-v1.75~26c01 - Cite this Paper ---> DOI: 10.1002/sia.70032")
+        frame = MyFrame(None, "KherveFitting-v1.80~26c01 - Cite this Paper ---> DOI: 10.1002/sia.70032")
     elif os_name == "Windows":
-        frame = MyFrame(None, "KherveFitting-v1.75~26c01 - Cite this Paper ---> DOI: 10.1002/sia.70032")
+        frame = MyFrame(None, "KherveFitting-v1.80~26c01 - Cite this Paper ---> DOI: 10.1002/sia.70032")
     else:
-        frame = MyFrame(None, "KherveFitting-v1.75~26c01 - Cite this Paper ---> DOI: 10.1002/sia.70032")
+        frame = MyFrame(None, "KherveFitting-v1.80~26c01 - Cite this Paper ---> DOI: 10.1002/sia.70032")
 
     # Apply preferences
     splash.update_message("Loading User Preferences...")
