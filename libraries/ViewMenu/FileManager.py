@@ -6575,7 +6575,7 @@ class FileManagerWindow(wx.Frame):
                 mult = getattr(self, 'map_offset_multiplier', 1)
                 ylabel = f'Norm. Intensity 0-1000 (offset×{mult})'
             else:
-                ylabel = 'Norm. Intensity (0-1000)'
+                ylabel = 'Norm. Intensity'
         else:
             ylabel = 'Intensity (CPS)'
         self.parent.ax.set_ylabel(ylabel, fontsize=getattr(self.parent, 'axis_title_size', 10))
@@ -6717,7 +6717,7 @@ class FileManagerWindow(wx.Frame):
         try:
             cbar_ax = self.parent.figure.add_axes([0.84, 0.1, 0.03, 0.85])
             cbar = self.parent.figure.colorbar(heatmap_img, cax=cbar_ax)
-            cbar_label = 'Normalised Intensity (0-1)' if norm_mode == "Norm. Auto" else 'Intensity (CPS)'
+            cbar_label = 'Normalised Intensity' if norm_mode == "Norm. Auto" else 'Intensity (CPS)'
             cbar.set_label(cbar_label, rotation=270, labelpad=20,
                            fontsize=getattr(self.parent, 'axis_title_size', 9))
             cbar.ax.tick_params(labelsize=getattr(self.parent, 'axis_number_size', 9))
@@ -6886,7 +6886,7 @@ class FileManagerWindow(wx.Frame):
         # Create colorbar axes manually at fixed position [left, bottom, width, height]
         cbar_ax = self.parent.figure.add_axes([0.84, 0.1, 0.03, 0.85])
         cbar = self.parent.figure.colorbar(im, cax=cbar_ax)
-        cbar_label = 'Normalised Intensity (0-1)' if norm_mode == "Norm. Auto" else 'Intensity (CPS)'
+        cbar_label = 'Normalised Intensity' if norm_mode == "Norm. Auto" else 'Intensity (CPS)'
         cbar.set_label(cbar_label, rotation=270, labelpad=20,
                        fontsize=self.parent.axis_title_size)
         cbar.ax.tick_params(labelsize=self.parent.axis_number_size)
@@ -6964,7 +6964,7 @@ class FileManagerWindow(wx.Frame):
             cbar = self.parent.figure.colorbar(im, cax=cbar_ax)
             self.parent.heatmap_cbar_ax = cbar_ax
 
-        cbar.set_label('Normalized Intensity (0-1)', rotation=270, labelpad=20,
+        cbar.set_label('Normalized Intensity)', rotation=270, labelpad=20,
                        fontsize=self.parent.axis_title_size)
         cbar.ax.tick_params(labelsize=self.parent.axis_number_size)
         self.parent.heatmap_colorbar = cbar

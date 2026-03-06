@@ -1628,12 +1628,27 @@ class PlotManager:
             self.canvas.draw_idle()
             return
 
-        # Build 2D array (num_sweeps × num_be_points)
+        # Determine normalisation mode: defer to FileManager combo if open, else default Norm. Auto
+        norm_mode = "Norm. Auto"
+        if hasattr(window, 'file_manager') and window.file_manager is not None:
+            try:
+                norm_mode = window.file_manager.norm_type.GetValue()
+            except Exception:
+                norm_mode = "Norm. Auto"
+
+        # Build 2D array (num_sweeps × num_be_points), normalising each row to 0-1000 if requested
         data_2d = np.zeros((num_sweeps, len(be_values)))
         for i in range(num_sweeps):
             col_name = f'Y{i + 1}'
             if col_name in map_data:
-                data_2d[i, :] = np.array(map_data[col_name])
+                row = np.array(map_data[col_name], dtype=float)
+                if norm_mode == "Norm. Auto":
+                    r_min, r_max = row.min(), row.max()
+                    if r_max - r_min > 0:
+                        row = (row - r_min) / (r_max - r_min) * 1000.0
+                    else:
+                        row = np.full_like(row, 500.0)
+                data_2d[i, :] = row
 
         # --- clear axes and any existing colorbar ---
         self.ax.clear()
@@ -1659,17 +1674,19 @@ class PlotManager:
         cmap_name = getattr(window, 'heatmap_colormap', 'viridis')
         be_descending = be_values[0] > be_values[-1] if len(be_values) > 1 else False
 
+        vmin_h = 0 if norm_mode == "Norm. Auto" else data_2d.min()
+        vmax_h = 1000.0 if norm_mode == "Norm. Auto" else data_2d.max()
         if be_descending:
             heatmap_img = self.ax.imshow(
                 data_2d, aspect='auto', origin='lower',
                 extent=[float(be_values[0]), float(be_values[-1]), 0, num_sweeps],
-                cmap=cmap_name)
+                cmap=cmap_name, vmin=vmin_h, vmax=vmax_h)
         else:
             data_flipped = np.fliplr(data_2d)
             heatmap_img = self.ax.imshow(
                 data_flipped, aspect='auto', origin='lower',
                 extent=[float(be_values.max()), float(be_values.min()), 0, num_sweeps],
-                cmap=cmap_name)
+                cmap=cmap_name, vmin=vmin_h, vmax=vmax_h)
 
         self.ax.set_ylim(0, num_sweeps)
         self.ax.set_xlabel('Binding Energy (eV)',
@@ -1689,7 +1706,8 @@ class PlotManager:
         try:
             cbar_ax = window.figure.add_axes([0.84, 0.1, 0.03, 0.85])
             cbar = window.figure.colorbar(heatmap_img, cax=cbar_ax)
-            cbar.set_label('Intensity', rotation=270, labelpad=20,
+            cbar_label = 'Norm. Intensity' if norm_mode == "Norm. Auto" else 'Intensity (CPS)'
+            cbar.set_label(cbar_label, rotation=270, labelpad=20,
                            fontsize=getattr(window, 'axis_title_size', 9))
             cbar.ax.tick_params(labelsize=getattr(window, 'axis_number_size', 9))
             window.heatmap_colorbar = cbar
