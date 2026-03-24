@@ -23,9 +23,9 @@ class FittingWindow(wx.Frame):
 
         if normal:
             if 'wxMac' in wx.PlatformInfo:
-                self.SetSize((262, 380))  # Increased height to accommodate new elements
-                self.SetMinSize((262, 380))
-                self.SetMaxSize((300, 580))
+                self.SetSize((267, 390))  # Increased height to accommodate new elements
+                self.SetMinSize((267, 390))
+                self.SetMaxSize((305, 590))
             elif 'wxGTK' in wx.PlatformInfo:  # This is for Linux
                 desktop = self.get_linux_desktop()
                 if desktop == 'gnome':
@@ -40,9 +40,9 @@ class FittingWindow(wx.Frame):
                 print(f'GTK environment: {desktop}')
                 print('GTK environment')
             else:
-                self.SetSize((276, 400))  # Increased height to accommodate new elements
-                self.SetMinSize((276, 400))
-                self.SetMaxSize((276, 400))
+                self.SetSize((281, 405))  # Increased height to accommodate new elements
+                self.SetMinSize((281, 405))
+                self.SetMaxSize((281, 405))
         else:
             # Mini mode - smaller window
             if 'wxMac' in wx.PlatformInfo:
@@ -52,7 +52,7 @@ class FittingWindow(wx.Frame):
             elif 'wxGTK' in wx.PlatformInfo:
                 self.SetSize((260, 240))
             else:
-                self.SetSize((275, 220))
+                self.SetSize((275, 240))
 
 
 
@@ -70,7 +70,7 @@ class FittingWindow(wx.Frame):
 
 
     def init_ui(self):
-        panel = wx.Panel(self)
+        panel = wx.Panel(self, style=wx.BORDER_RAISED)
         def detect_dark_mode():
             if 'wxMac' in wx.PlatformInfo:  # Mac
                 return wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOW).GetLuminance() < 0.5
