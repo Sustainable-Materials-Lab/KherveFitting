@@ -542,19 +542,25 @@ class KeyEventHandlers:
         if hasattr(self.main_frame, 'add_averaging_indicator_lines'):
             self.main_frame.add_averaging_indicator_lines()
 
-
     def _handle_ctrl_up_down_keys(self, keycode):
         """Handle Ctrl+Up/Down keys for intensity adjustment"""
 
         # Check if we're in heatmap mode FIRST
         if hasattr(self.main_frame, 'heatmap_data') and self.main_frame.heatmap_data is not None:
-            # Heatmap mode - adjust colorbar intensity
+            fm = getattr(self.main_frame, 'file_manager', None)
+            norm_mode = fm.norm_type.GetValue() if fm is not None and hasattr(fm, 'norm_type') else "Norm. Auto"
+            if norm_mode == "Norm. Auto":
+                step = 50.0
+                vmax_min, vmax_max = 50.0, 2000.0
+            else:
+                data_range = self.main_frame.heatmap_data.max() - self.main_frame.heatmap_data.min()
+                step = max(1.0, 0.05 * data_range)
+                vmax_min = self.main_frame.heatmap_data.min() + step
+                vmax_max = self.main_frame.heatmap_data.max() * 3.0
             if keycode == wx.WXK_DOWN:
-                # Decrease vmax (increase contrast/brightness)
-                self.main_frame.heatmap_vmax = max(0.1, self.main_frame.heatmap_vmax - 0.05)
+                self.main_frame.heatmap_vmax = max(vmax_min, self.main_frame.heatmap_vmax - step)
             else:  # wx.WXK_UP
-                # Increase vmax (decrease contrast/brightness)
-                self.main_frame.heatmap_vmax = min(2.0, self.main_frame.heatmap_vmax + 0.05)
+                self.main_frame.heatmap_vmax = min(vmax_max, self.main_frame.heatmap_vmax + step)
 
             # Refresh the heatmap with new intensity
             if hasattr(self.main_frame, 'file_manager') and self.main_frame.file_manager:

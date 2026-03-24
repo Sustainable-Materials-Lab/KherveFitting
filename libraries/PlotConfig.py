@@ -418,16 +418,22 @@ class PlotConfig:
                 hasattr(window, 'file_manager') and window.file_manager is not None):
             # In heatmap mode - adjust heatmap intensity instead of Y-axis
             if axis in ['high_int', 'low_int']:
-                # Both high_int and low_int will adjust heatmap vmax
+                norm_mode = getattr(window.file_manager, 'norm_type', None)
+                norm_str = norm_mode.GetValue() if norm_mode is not None else "Norm. Auto"
+                if norm_str == "Norm. Auto":
+                    step = 50.0
+                    vmax_min, vmax_max = 50.0, 2000.0
+                else:
+                    data_range = window.heatmap_data.max() - window.heatmap_data.min()
+                    step = max(1.0, 0.05 * data_range)
+                    vmax_min = window.heatmap_data.min() + step
+                    vmax_max = window.heatmap_data.max() * 3.0
                 if direction == 'increase':
-                    window.heatmap_vmax = min(2.0, window.heatmap_vmax + 0.05)
+                    window.heatmap_vmax = min(vmax_max, window.heatmap_vmax + step)
                 elif direction == 'decrease':
-                    window.heatmap_vmax = max(0.1, window.heatmap_vmax - 0.05)
-
-                # Refresh the heatmap with new intensity
+                    window.heatmap_vmax = max(vmax_min, window.heatmap_vmax - step)
                 window.file_manager.refresh_heatmap()
                 return
-            # For BE adjustments in heatmap mode, do nothing (or handle if needed)
             elif axis in ['high_be', 'low_be']:
                 return
 

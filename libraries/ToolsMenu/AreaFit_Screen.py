@@ -12,7 +12,7 @@ class BackgroundWindow(wx.Frame):
         self.SetTitle("Measure Area")
 
         if 'wxMac' in wx.PlatformInfo:
-            self.SetSize((260, 355))
+            self.SetSize((260, 365))
             # self.SetMinSize((260, 345))
             # self.SetMaxSize((260, 345))
         elif 'wxGTK' in wx.PlatformInfo:
@@ -23,12 +23,12 @@ class BackgroundWindow(wx.Frame):
                 self.SetSize((260, 480))
             elif desktop == 'xfce':
                 print('linux xfce')
-                self.SetSize((260, 460))
+                self.SetSize((260, 470))
             else:
                 self.SetSize((280, 520))
             print(f'GTK environment: {desktop}')
         else:
-            self.SetSize((276, 370))
+            self.SetSize((276, 380))
             # self.SetMinSize((270, 370))
             # self.SetMaxSize((270, 370))
 
@@ -41,7 +41,8 @@ class BackgroundWindow(wx.Frame):
 
     def init_ui(self):
         """Initialize UI with notebook tabs"""
-        panel = wx.Panel(self)
+        panel = wx.Panel(self, style=wx.BORDER_RAISED)
+        # panel = wx.Panel(self)
 
         def detect_dark_mode():
             if 'wxMac' in wx.PlatformInfo:

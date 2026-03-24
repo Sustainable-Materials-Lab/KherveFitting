@@ -62,12 +62,17 @@ def extract_core_level_name(filename):
 def parse_vgd_file(file_path):
     """
     Parse a VGD file and return extracted data.
-    Handles both single-spectrum and multi-spectrum VGD files.
+    Handles single-spectrum, multi-spectrum, and 3D area scan VGD files.
+
+    For 3D area scans (ndims == 3), the data has dimensions:
+        [n_x_pixels, n_y_pixels, n_ke_points]
+    Each Y-pixel row is averaged across all X-pixels to produce one spectrum,
+    yielding n_y_pixels spectra total (one sheet per Y row).
 
     Returns:
         dict with keys: intensities, ke_start, ke_step, num_points, source_energy,
                        txf_coeffs, pass_energy, work_fn, dwell_time, periods, metadata,
-                       num_spectra, points_per_spectrum
+                       num_spectra, points_per_spectrum, is_area_scan
     """
     if olefile is None:
         raise ImportError("olefile library is required")
@@ -86,30 +91,52 @@ def parse_vgd_file(file_path):
     vgdata = ole.openstream('VGData').read()
     total_points = len(vgdata) // 8
 
-    # Check VGDataAxes for multi-spectrum info
-    # Format: offset 12 = num_points - 1, offset 28 = num_spectra - 1
+    # Check VGDataAxes for dimensionality info
+    # offset 4  = number of dimensions (ndims)
+    # offset 12 = dim1 - 1  (KE points)
+    # offset 28 = dim2 - 1  (spectra count, or X pixels for area scan)
+    # offset 44 = dim3 - 1  (Y pixels, only present for 3D area scans)
     data_axes = ole.openstream('VGDataAxes').read()
 
     num_spectra = 1
     points_per_spectrum = total_points
+    is_area_scan = False
 
-    if len(data_axes) >= 32:
-        dim1 = struct.unpack('<i', data_axes[12:16])[0] + 1  # Points per spectrum
-        dim2 = struct.unpack('<i', data_axes[28:32])[0] + 1  # Number of spectra
+    if len(data_axes) >= 8:
+        ndims = struct.unpack('<i', data_axes[4:8])[0]
 
-        # Validate dimensions
-        if dim1 * dim2 == total_points and dim2 > 1:
-            num_spectra = dim2
-            points_per_spectrum = dim1
+        if ndims == 3 and len(data_axes) >= 56:
+            # 3D area scan: [n_x_pixels, n_y_pixels, n_ke_points]
+            n_ke  = struct.unpack('<i', data_axes[12:16])[0] + 1
+            n_x   = struct.unpack('<i', data_axes[28:32])[0] + 1
+            n_y   = struct.unpack('<i', data_axes[44:48])[0] + 1
 
-    # Parse all intensities
+            if n_ke * n_x * n_y == total_points:
+                is_area_scan = True
+                points_per_spectrum = n_ke
+                num_spectra = n_y  # one spectrum per Y-pixel row (averaged over X)
+
+        elif ndims <= 2 and len(data_axes) >= 32:
+            # Standard 2D: [n_spectra, n_ke_points]
+            dim1 = struct.unpack('<i', data_axes[12:16])[0] + 1
+            dim2 = struct.unpack('<i', data_axes[28:32])[0] + 1
+            if dim1 * dim2 == total_points and dim2 > 1:
+                num_spectra = dim2
+                points_per_spectrum = dim1
+
+    # Parse all raw intensities
     all_intensities = []
     for i in range(total_points):
         val = struct.unpack('<d', vgdata[i * 8:i * 8 + 8])[0]
         all_intensities.append(val)
 
-    # Reshape into list of spectra if multi-spectrum
-    if num_spectra > 1:
+    # Reshape intensities
+    if is_area_scan:
+        # Reshape to [n_x, n_y, n_ke] then average over X to get [n_y, n_ke]
+        import numpy as _np
+        arr = _np.array(all_intensities).reshape(n_x, n_y, n_ke)
+        intensities = [arr[:, y, :].mean(axis=0).tolist() for y in range(n_y)]
+    elif num_spectra > 1:
         intensities_2d = []
         for s in range(num_spectra):
             start_idx = s * points_per_spectrum
@@ -199,6 +226,7 @@ def parse_vgd_file(file_path):
         'num_points': points_per_spectrum,
         'total_points': total_points,
         'num_spectra': num_spectra,
+        'is_area_scan': is_area_scan,
         'source_energy': source_energy,
         'txf_coeffs': txf_coeffs,
         'pass_energy': pass_energy,
@@ -327,8 +355,12 @@ def import_vgd_file(window, file_path=None, show_message=False):
         parsed_data = parse_vgd_file(file_path)
 
         num_spectra = parsed_data.get('num_spectra', 1)
+        is_area_scan = parsed_data.get('is_area_scan', False)
         update_console(f"  Points per spectrum: {parsed_data['num_points']}")
-        update_console(f"  Number of spectra: {num_spectra}")
+        if is_area_scan:
+            update_console(f"  Type: Area scan ({num_spectra} Y-pixel rows)")
+        else:
+            update_console(f"  Number of spectra: {num_spectra}")
         update_console(f"  Source Energy: {parsed_data['source_energy']:.2f} eV")
         if parsed_data['pass_energy']:
             update_console(f"  Pass Energy: {parsed_data['pass_energy']:.1f} eV")
@@ -336,12 +368,15 @@ def import_vgd_file(window, file_path=None, show_message=False):
             update_console(f"  Dwell: {parsed_data['dwell_time']:.4f} s, Periods: {parsed_data['periods']}")
 
         # Extract core level name from filename
+        # For area scans, prefer the file title from metadata
         base_name = os.path.splitext(os.path.basename(file_path))[0]
-        core_level = extract_core_level_name(os.path.basename(file_path))
-        update_console(f"  Core level: {core_level}")
-
-        # Get metadata
         meta = parsed_data['metadata']
+        if is_area_scan and meta['title'] and meta['title'] != "Unknown":
+            core_level = meta['title'].replace(' ', '_')
+        else:
+            core_level = extract_core_level_name(os.path.basename(file_path))
+        update_console(f"  Core level / label: {core_level}")
+
         source_energy = parsed_data['source_energy']
         source_label = "Al K-alpha Monochromated" if abs(source_energy - 1486.68) < 0.1 else f"X-ray {source_energy:.2f} eV"
 
@@ -404,6 +439,7 @@ def import_vgd_file(window, file_path=None, show_message=False):
                 'Species & Transition': core_level,
                 'Spectrum Index': str(spectrum_idx),
                 'Total Spectra': str(num_spectra),
+                'Area Scan': 'Yes' if is_area_scan else 'No',
                 'Source Label': source_label,
                 'Source Energy': f"{source_energy:.2f}",
                 'Pass Energy': f"{parsed_data['pass_energy']:.2f}" if parsed_data['pass_energy'] else 'Unknown',
@@ -493,7 +529,9 @@ def import_vgd_file(window, file_path=None, show_message=False):
                 window.file_manager = None
 
         update_console(f"\nImport complete!")
-        if num_spectra > 1:
+        if is_area_scan:
+            update_console(f"  {core_level}: area scan, {num_spectra} Y-row spectra imported")
+        elif num_spectra > 1:
             update_console(f"  {core_level}: {num_spectra} spectra imported")
         else:
             update_console(f"  {core_level}: 1 spectrum imported")
@@ -620,12 +658,19 @@ def import_multiple_vgd_files(window, file_paths=None, show_message=False):
                 parsed_data = parse_vgd_file(file_path)
 
                 num_spectra = parsed_data.get('num_spectra', 1)
-                update_console(f"  Spectra in file: {num_spectra}")
+                is_area_scan = parsed_data.get('is_area_scan', False)
+                if is_area_scan:
+                    update_console(f"  Type: Area scan ({num_spectra} Y-pixel rows)")
+                else:
+                    update_console(f"  Spectra in file: {num_spectra}")
 
                 base_name = os.path.splitext(os.path.basename(file_path))[0]
-                core_level = extract_core_level_name(os.path.basename(file_path))
-
                 meta = parsed_data['metadata']
+                if is_area_scan and meta['title'] and meta['title'] != "Unknown":
+                    core_level = meta['title'].replace(' ', '_')
+                else:
+                    core_level = extract_core_level_name(os.path.basename(file_path))
+
                 source_energy = parsed_data['source_energy']
                 source_label = "Al K-alpha Monochromated" if abs(source_energy - 1486.68) < 0.1 else f"X-ray {source_energy:.2f} eV"
 
@@ -684,6 +729,7 @@ def import_multiple_vgd_files(window, file_paths=None, show_message=False):
                         'Species & Transition': core_level,
                         'Spectrum Index': str(spectrum_idx),
                         'Total Spectra': str(num_spectra),
+                        'Area Scan': 'Yes' if is_area_scan else 'No',
                         'Source Label': source_label,
                         'Source Energy': f"{source_energy:.2f}",
                         'Pass Energy': f"{parsed_data['pass_energy']:.2f}" if parsed_data['pass_energy'] else 'Unknown',

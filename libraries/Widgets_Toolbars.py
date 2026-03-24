@@ -785,10 +785,6 @@ def create_menu(window):
 
     # Thermo submenu
     thermo_menu = wx.Menu()
-    import_avantage_item = thermo_menu.Append(wx.NewId(), "Avantage Data file (.xlsx or .xls)")
-    window.Bind(wx.EVT_MENU, lambda event: import_avantage_file(window), import_avantage_item)
-    import_multiple_avantage_item = thermo_menu.Append(wx.NewId(), "Avantage Multiple xlsx files (folder)")
-    window.Bind(wx.EVT_MENU, lambda event: import_multiple_avantage_files(window), import_multiple_avantage_item)
     vgd_item = thermo_menu.Append(wx.ID_ANY, "VGD file (.vgd)")
     window.Bind(wx.EVT_MENU, lambda evt: import_vgd_file(window), vgd_item)
     vgd_multi = thermo_menu.Append(wx.ID_ANY, "VGD Multiple files (folder)")
@@ -797,6 +793,10 @@ def create_menu(window):
     window.Bind(wx.EVT_MENU, lambda event: open_avg_file(window), import_avg_item)
     import_multiple_avg_item = thermo_menu.Append(wx.NewId(), "AVG Multiple files (folder)")
     window.Bind(wx.EVT_MENU, lambda event: import_multiple_avg_files(window), import_multiple_avg_item)
+    import_avantage_item = thermo_menu.Append(wx.NewId(), "Avantage Data file (.xlsx or .xls)")
+    window.Bind(wx.EVT_MENU, lambda event: import_avantage_file(window), import_avantage_item)
+    import_multiple_avantage_item = thermo_menu.Append(wx.NewId(), "Avantage Multiple xlsx files (folder)")
+    window.Bind(wx.EVT_MENU, lambda event: import_multiple_avantage_files(window), import_multiple_avantage_item)
     import_menu.AppendSubMenu(thermo_menu, "Thermo")
 
     # Scienta submenu

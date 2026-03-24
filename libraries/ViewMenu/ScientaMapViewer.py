@@ -115,6 +115,10 @@ class ScientaMapViewerWindow(wx.Frame):
         self.colormap = 'Greens'
         self.bin_factor = 1
 
+        self.normalize = True
+        self._cbar = None
+        self._cbar_ax = None
+
         # Drop line state
         self.drop_line = None
         self.drop_text = None
@@ -176,6 +180,15 @@ class ScientaMapViewerWindow(wx.Frame):
 
         sweep_panel.SetSizer(sweep_sizer)
         left_sizer.Add(sweep_panel, 0, wx.EXPAND | wx.ALL, 5)
+
+        # Normalisation control
+        left_sizer.Add(wx.StaticLine(left_panel), 0, wx.EXPAND | wx.ALL, 5)
+
+        self.norm_checkbox = wx.CheckBox(left_panel, label="Norm. (0-1000)")
+        self.norm_checkbox.SetValue(True)
+        self.norm_checkbox.SetToolTip("Normalise each sweep to 0-1000 for display")
+        self.norm_checkbox.Bind(wx.EVT_CHECKBOX, self.on_norm_toggle)
+        left_sizer.Add(self.norm_checkbox, 0, wx.ALL, 5)
 
         # Binning control
         left_sizer.Add(wx.StaticLine(left_panel), 0, wx.EXPAND | wx.ALL, 5)
@@ -241,7 +254,7 @@ class ScientaMapViewerWindow(wx.Frame):
 
         # Create figure for heatmap
         self.figure = Figure(figsize=(5, 5), dpi=100)
-        self.figure.set_tight_layout(True)
+        self.figure.set_tight_layout(False)
         self.canvas = FigureCanvas(right_panel, -1, self.figure)
         self.ax = self.figure.add_subplot(111)
 
@@ -446,35 +459,71 @@ class ScientaMapViewerWindow(wx.Frame):
         """Update the heatmap display."""
         self.ax.clear()
 
+        # Remove old colorbar axes completely before redrawing
+        if hasattr(self, '_cbar_ax') and self._cbar_ax is not None:
+            try:
+                self.figure.delaxes(self._cbar_ax)
+            except Exception:
+                pass
+            self._cbar_ax = None
+            self._cbar = None
+
         # Get data - mask dropped sweeps with NaN
-        data = self.data_2d.copy()
+        data = self.data_2d.copy().astype(float)
         for dropped_idx in self.dropped_sweeps:
             if dropped_idx < data.shape[0]:
                 data[dropped_idx, :] = np.nan
 
-        be_min, be_max = self.be_values_display.min(), self.be_values_display.max()
+        # Per-sweep normalisation to 0-1000
+        if getattr(self, 'normalize', True):
+            for i in range(data.shape[0]):
+                row = data[i, :]
+                finite = row[np.isfinite(row)]
+                if len(finite) == 0:
+                    continue
+                r_min, r_max = finite.min(), finite.max()
+                if r_max - r_min > 0:
+                    data[i, :] = np.where(np.isfinite(row),
+                                          (row - r_min) / (r_max - r_min) * 1000.0,
+                                          np.nan)
+                else:
+                    data[i, :] = np.where(np.isfinite(row), 500.0, np.nan)
+            vmin, vmax = 0, 1000
+            cbar_label = 'Norm. Intensity (0-1000)'
+        else:
+            finite_all = data[np.isfinite(data)]
+            vmin = float(finite_all.min()) if len(finite_all) else 0
+            vmax = float(finite_all.max()) if len(finite_all) else 1
+            cbar_label = 'Intensity (CPS)'
 
-        # Check if BE is in descending order (typical for XPS)
-        be_descending = self.be_values_display[0] > self.be_values_display[-1] if len(self.be_values_display) > 1 else False
+        be_min, be_max = self.be_values_display.min(), self.be_values_display.max()
+        be_descending = (self.be_values_display[0] > self.be_values_display[-1]
+                         if len(self.be_values_display) > 1 else False)
+
+        # Fix main axes position before drawing
+        # self.ax.set_position([0.12, 0.1, 0.68, 0.85])
+        # Full-width axes (no colorbar)
+        # Full-width axes (no colorbar) — set_position must be after ax.clear()
+        self.ax.set_position([0.10, 0.10, 0.87, 0.87])
 
         if be_descending:
-            # BE already goes high to low, plot normally
-            self.heatmap = self.ax.imshow(data, aspect='auto', origin='lower',
-                                          extent=[self.be_values_display[0], self.be_values_display[-1],
-                                                  0, self.num_sweeps_display - 0],
-                                          cmap=self.colormap)
+            self.heatmap = self.ax.imshow(
+                data, aspect='auto', origin='lower',
+                extent=[self.be_values_display[0], self.be_values_display[-1],
+                        0, self.num_sweeps_display],
+                cmap=self.colormap, vmin=vmin, vmax=vmax)
         else:
-            # BE goes low to high, flip for display
             data_flipped = np.fliplr(data)
-            self.heatmap = self.ax.imshow(data_flipped, aspect='auto', origin='lower',
-                                          extent=[be_max, be_min, 0, self.num_sweeps_display - 0],
-                                          cmap=self.colormap)
+            self.heatmap = self.ax.imshow(
+                data_flipped, aspect='auto', origin='lower',
+                extent=[be_max, be_min, 0, self.num_sweeps_display],
+                cmap=self.colormap, vmin=vmin, vmax=vmax)
 
-            # Set Y-axis limits to start at 0
         self.ax.set_ylim(0, self.num_sweeps_display)
-
         self.ax.set_xlabel('Binding Energy (eV)', fontsize=10)
         self.ax.set_ylabel('Sweep Number', fontsize=10)
+
+        # No colorbar — norm state shown via checkbox label instead
 
         # Draw selection rectangle if exists
         if self.selected_rect:
@@ -484,7 +533,7 @@ class ScientaMapViewerWindow(wx.Frame):
                                      linestyle='-')
             self.ax.add_patch(rect)
 
-        # Initialize drop line (hidden initially, position outside view)
+        # Drop line (hidden initially)
         self.drop_line = self.ax.axhline(y=-10, color='red', linewidth=1.5, linestyle='--', visible=False)
         self.drop_text = self.ax.text(be_max, -10, '', color='red', fontsize=8, ha='left', visible=False)
 
@@ -525,6 +574,11 @@ class ScientaMapViewerWindow(wx.Frame):
     def _set_colormap(self, cmap):
         """Set colormap."""
         self.colormap = cmap
+        self.update_heatmap()
+
+    def on_norm_toggle(self, event):
+        """Toggle per-sweep normalisation and refresh heatmap."""
+        self.normalize = self.norm_checkbox.GetValue()
         self.update_heatmap()
 
     def on_zoom_in(self, event):

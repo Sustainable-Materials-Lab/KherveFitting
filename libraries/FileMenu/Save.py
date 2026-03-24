@@ -1779,26 +1779,52 @@ def save_plot_to_excel(window, update_console=None):
                 if num_sweeps == 0 or len(be_values) == 0:
                     raise ValueError(f"Invalid map data in '{sheet_name}'")
 
+                # Raw data — always written to Excel cells unchanged
                 data_2d = np.zeros((num_sweeps, len(be_values)))
                 for i in range(num_sweeps):
                     col_name = f'Y{i + 1}'
                     if col_name in map_data:
                         data_2d[i, :] = np.array(map_data[col_name])
 
+                # Normalisation mode: FileManager combo if open, else Norm. Auto by default
+                norm_mode = "Norm. Auto"
+                if hasattr(window, 'file_manager') and window.file_manager is not None:
+                    try:
+                        norm_mode = window.file_manager.norm_type.GetValue()
+                    except Exception:
+                        norm_mode = "Norm. Auto"
+
+                # Build display array (normalised or raw) used only for the saved image
+                if norm_mode == "Norm. Auto":
+                    plot_2d = np.zeros_like(data_2d)
+                    for i in range(data_2d.shape[0]):
+                        row = data_2d[i, :]
+                        r_min, r_max = row.min(), row.max()
+                        if r_max - r_min > 0:
+                            plot_2d[i, :] = (row - r_min) / (r_max - r_min) * 1000.0
+                        else:
+                            plot_2d[i, :] = 500.0
+                    vmin_img, vmax_img = 0, 1000
+                    cbar_label = 'Norm. Intensity (0-1000)'
+                else:
+                    plot_2d = data_2d.copy()
+                    vmin_img, vmax_img = data_2d.min(), data_2d.max()
+                    cbar_label = 'Intensity (CPS)'
+
                 cmap_name = getattr(window, 'heatmap_colormap', 'viridis')
 
-                # --- 2. Render a dedicated figure (never touches window.figure) ---
+                # --- 2. Render a dedicated figure using display data (never touches window.figure) ---
                 fig, ax = plt.subplots(figsize=(window.excel_width, window.excel_height))
                 be_descending = be_values[0] > be_values[-1] if len(be_values) > 1 else False
                 if be_descending:
-                    im = ax.imshow(data_2d, aspect='auto', origin='lower',
+                    im = ax.imshow(plot_2d, aspect='auto', origin='lower',
                                    extent=[float(be_values[0]), float(be_values[-1]), 0, num_sweeps],
-                                   cmap=cmap_name)
+                                   cmap=cmap_name, vmin=vmin_img, vmax=vmax_img)
                 else:
-                    data_flipped = np.fliplr(data_2d)
+                    data_flipped = np.fliplr(plot_2d)
                     im = ax.imshow(data_flipped, aspect='auto', origin='lower',
                                    extent=[float(be_values.max()), float(be_values.min()), 0, num_sweeps],
-                                   cmap=cmap_name)
+                                   cmap=cmap_name, vmin=vmin_img, vmax=vmax_img)
 
                 ax.set_xlabel('Binding Energy (eV)')
                 ax.set_ylabel('Sweep Number')
@@ -1806,7 +1832,7 @@ def save_plot_to_excel(window, update_console=None):
                              or map_data.get('ExperimentalInfo', {}).get('Core Level', '')
                              or sheet_name)
                 ax.set_title(f'XPS Map \u2013 {base_name}')
-                fig.colorbar(im, ax=ax, label='Intensity')
+                fig.colorbar(im, ax=ax, label=cbar_label)
 
                 buf = io.BytesIO()
                 fig.savefig(buf, format='png', dpi=window.excel_dpi, bbox_inches='tight')
@@ -1862,21 +1888,21 @@ def save_plot_to_excel(window, update_console=None):
                         window.heatmap_colorbar = None
                     window.ax.set_position([0.1, 0.1, 0.73, 0.85])
                     if be_descending:
-                        hm = window.ax.imshow(data_2d, aspect='auto', origin='lower',
+                        hm = window.ax.imshow(plot_2d, aspect='auto', origin='lower',
                                               extent=[float(be_values[0]), float(be_values[-1]), 0, num_sweeps],
-                                              cmap=cmap_name)
+                                              cmap=cmap_name, vmin=vmin_img, vmax=vmax_img)
                     else:
-                        data_flipped2 = np.fliplr(data_2d)
+                        data_flipped2 = np.fliplr(plot_2d)
                         hm = window.ax.imshow(data_flipped2, aspect='auto', origin='lower',
                                               extent=[float(be_values.max()), float(be_values.min()), 0, num_sweeps],
-                                              cmap=cmap_name)
+                                              cmap=cmap_name, vmin=vmin_img, vmax=vmax_img)
                     window.ax.set_xlabel('Binding Energy (eV)')
                     window.ax.set_ylabel('Sweep Number')
                     window.ax.set_title(f'XPS Map \u2013 {base_name}')
                     try:
                         cbar_ax = window.figure.add_axes([0.84, 0.1, 0.03, 0.85])
                         cbar = window.figure.colorbar(hm, cax=cbar_ax)
-                        cbar.set_label('Intensity', rotation=270, labelpad=20)
+                        cbar.set_label(cbar_label, rotation=270, labelpad=20)
                         window.heatmap_colorbar = cbar
                     except Exception:
                         pass

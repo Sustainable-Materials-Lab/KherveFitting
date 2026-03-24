@@ -6575,7 +6575,7 @@ class FileManagerWindow(wx.Frame):
                 mult = getattr(self, 'map_offset_multiplier', 1)
                 ylabel = f'Norm. Intensity 0-1000 (offset×{mult})'
             else:
-                ylabel = 'Norm. Intensity (0-1000)'
+                ylabel = 'Norm. Intensity'
         else:
             ylabel = 'Intensity (CPS)'
         self.parent.ax.set_ylabel(ylabel, fontsize=getattr(self.parent, 'axis_title_size', 10))
@@ -6717,7 +6717,7 @@ class FileManagerWindow(wx.Frame):
         try:
             cbar_ax = self.parent.figure.add_axes([0.84, 0.1, 0.03, 0.85])
             cbar = self.parent.figure.colorbar(heatmap_img, cax=cbar_ax)
-            cbar_label = 'Normalised Intensity (0-1)' if norm_mode == "Norm. Auto" else 'Intensity (CPS)'
+            cbar_label = 'Normalised Intensity' if norm_mode == "Norm. Auto" else 'Intensity (CPS)'
             cbar.set_label(cbar_label, rotation=270, labelpad=20,
                            fontsize=getattr(self.parent, 'axis_title_size', 9))
             cbar.ax.tick_params(labelsize=getattr(self.parent, 'axis_number_size', 9))
@@ -6775,9 +6775,8 @@ class FileManagerWindow(wx.Frame):
             self.parent.plot_manager.residuals_subplot = None
             self.parent.ax.get_xaxis().set_visible(True)
 
-        # Initialize heatmap intensity scale if not exists
-        if not hasattr(self.parent, 'heatmap_vmax'):
-            self.parent.heatmap_vmax = 1.0
+        # Initialize heatmap intensity scale if not exists - will be set properly after normalisation
+        self.parent.heatmap_vmax = None  # reset each time so it's recalculated below
 
         # Collect all data
         all_data = []
@@ -6875,8 +6874,13 @@ class FileManagerWindow(wx.Frame):
         # Plot heatmap using pcolormesh
         X, Y = np.meshgrid(common_be, np.arange(len(sheet_names)))
 
-        vmin = 0 if norm_mode == "Norm. Auto" else display_data.min()
-        vmax = 1000.0 * self.parent.heatmap_vmax if norm_mode == "Norm. Auto" else display_data.max()
+        if norm_mode == "Norm. Auto":
+            self.parent.heatmap_vmax = 1000.0
+            vmin = 0
+        else:
+            self.parent.heatmap_vmax = display_data.max()
+            vmin = display_data.min()
+        vmax = self.parent.heatmap_vmax
         im = self.parent.ax.pcolormesh(X, Y, display_data, shading='auto', cmap=cmap,
                                        vmin=vmin, vmax=vmax)
 
@@ -6886,7 +6890,7 @@ class FileManagerWindow(wx.Frame):
         # Create colorbar axes manually at fixed position [left, bottom, width, height]
         cbar_ax = self.parent.figure.add_axes([0.84, 0.1, 0.03, 0.85])
         cbar = self.parent.figure.colorbar(im, cax=cbar_ax)
-        cbar_label = 'Normalised Intensity (0-1)' if norm_mode == "Norm. Auto" else 'Intensity (CPS)'
+        cbar_label = 'Normalised Intensity' if norm_mode == "Norm. Auto" else 'Intensity (CPS)'
         cbar.set_label(cbar_label, rotation=270, labelpad=20,
                        fontsize=self.parent.axis_title_size)
         cbar.ax.tick_params(labelsize=self.parent.axis_number_size)
@@ -6964,7 +6968,7 @@ class FileManagerWindow(wx.Frame):
             cbar = self.parent.figure.colorbar(im, cax=cbar_ax)
             self.parent.heatmap_cbar_ax = cbar_ax
 
-        cbar.set_label('Normalized Intensity (0-1)', rotation=270, labelpad=20,
+        cbar.set_label('Normalized Intensity)', rotation=270, labelpad=20,
                        fontsize=self.parent.axis_title_size)
         cbar.ax.tick_params(labelsize=self.parent.axis_number_size)
         self.parent.heatmap_colorbar = cbar
@@ -7007,20 +7011,20 @@ class FileManagerWindow(wx.Frame):
         label = wx.StaticText(self.heatmap_control_panel, label="Heatmap Intensity (vmax):")
         control_sizer.Add(label, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
 
-        # Slider for vmax control (0.1 to 2.0)
+        # Slider: 50..2000 for Norm. Auto (direct value), reused for no-norm mode too
         self.heatmap_vmax_slider = wx.Slider(self.heatmap_control_panel,
-                                             value=100,  # Start at 1.0
-                                             minValue=10,  # 0.1
-                                             maxValue=200,  # 2.0
+                                             value=1000,  # Start at 1000 (full range for Norm. Auto)
+                                             minValue=50,
+                                             maxValue=2000,
                                              style=wx.SL_HORIZONTAL | wx.SL_LABELS)
         self.heatmap_vmax_slider.SetMinSize((200, -1))
         control_sizer.Add(self.heatmap_vmax_slider, 1, wx.ALL | wx.EXPAND, 5)
 
         # Text control for precise value
         self.heatmap_vmax_text = wx.TextCtrl(self.heatmap_control_panel,
-                                             value="1.00",
+                                             value="1000.00",
                                              style=wx.TE_PROCESS_ENTER,
-                                             size=(60, -1))
+                                             size=(70, -1))
         control_sizer.Add(self.heatmap_vmax_text, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
 
         # Reset button
@@ -7043,28 +7047,47 @@ class FileManagerWindow(wx.Frame):
 
     def on_heatmap_slider_change(self, event):
         """Handle slider change for heatmap vmax"""
-        slider_value = self.heatmap_vmax_slider.GetValue()
-        vmax = slider_value / 100.0  # Convert to 0.1 - 2.0 range
+        norm_str = self.norm_type.GetValue() if hasattr(self, 'norm_type') else "Norm. Auto"
+        if norm_str == "Norm. Auto":
+            # slider 50..2000, value stored directly
+            vmax = float(self.heatmap_vmax_slider.GetValue())
+        else:
+            # slider 1..200 maps to 1%..200% of data max
+            data_max = self.parent.heatmap_data.max() if hasattr(self.parent, 'heatmap_data') and self.parent.heatmap_data is not None else 1.0
+            vmax = self.heatmap_vmax_slider.GetValue() / 100.0 * data_max
         self.parent.heatmap_vmax = vmax
         self.heatmap_vmax_text.SetValue(f"{vmax:.2f}")
         self.refresh_heatmap()
 
     def on_heatmap_text_change(self, event):
         """Handle text control change for heatmap vmax"""
+        norm_str = self.norm_type.GetValue() if hasattr(self, 'norm_type') else "Norm. Auto"
         try:
             vmax = float(self.heatmap_vmax_text.GetValue())
-            vmax = max(0.1, min(2.0, vmax))  # Clamp to range
+            if norm_str == "Norm. Auto":
+                vmax = max(50.0, min(2000.0, vmax))
+                self.heatmap_vmax_slider.SetValue(int(vmax))
+            else:
+                data_max = self.parent.heatmap_data.max() if hasattr(self.parent, 'heatmap_data') and self.parent.heatmap_data is not None else 1.0
+                vmax = max(1.0, vmax)
+                self.heatmap_vmax_slider.SetValue(int(vmax / data_max * 100))
             self.parent.heatmap_vmax = vmax
-            self.heatmap_vmax_slider.SetValue(int(vmax * 100))
             self.refresh_heatmap()
         except ValueError:
             pass
 
     def on_heatmap_reset(self, event):
-        """Reset heatmap vmax to default (1.0)"""
-        self.parent.heatmap_vmax = 1.0
-        self.heatmap_vmax_slider.SetValue(100)
-        self.heatmap_vmax_text.SetValue("1.00")
+        """Reset heatmap vmax to default"""
+        norm_str = self.norm_type.GetValue() if hasattr(self, 'norm_type') else "Norm. Auto"
+        if norm_str == "Norm. Auto":
+            self.parent.heatmap_vmax = 1000.0
+            self.heatmap_vmax_slider.SetValue(1000)
+            self.heatmap_vmax_text.SetValue("1000.00")
+        else:
+            data_max = self.parent.heatmap_data.max() if hasattr(self.parent, 'heatmap_data') and self.parent.heatmap_data is not None else 1.0
+            self.parent.heatmap_vmax = data_max
+            self.heatmap_vmax_slider.SetValue(100)
+            self.heatmap_vmax_text.SetValue(f"{data_max:.2f}")
         self.refresh_heatmap()
 
     def on_change_colormap(self, event):
