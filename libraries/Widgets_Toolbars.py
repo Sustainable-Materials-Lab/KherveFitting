@@ -43,7 +43,7 @@ from libraries.UsageAnalytics import show_usage_stats_window
 from libraries.FileMenu.Open import import_generic_excel_file
 from libraries.FileMenu.Igor_Import import import_igor_dat_file, import_igor_itx_file, import_multiple_igor_files
 from libraries.FileMenu.VGD_Import import import_vgd_file, import_multiple_vgd_files
-# from libraries.FileMenu.SDP_Import import import_sdp_file, import_multiple_sdp_files
+from libraries.FileMenu.SDP_Import import import_sdp_file, import_multiple_sdp_files
 from libraries.FileMenu.Scienta_Import import import_scienta_map, import_scienta_file, import_h5_scienta_file
 
 # With conditional imports:
@@ -876,14 +876,14 @@ def create_menu(window):
     # import_menu.AppendSubMenu(raman_menu, "Raman")
 
     # XAS Diamond-B07 submenu
-    # from libraries.FileMenu.XAS_Import import import_xas_file, import_multiple_xas_files
+    from libraries.FileMenu.XAS_Import import import_xas_file, import_multiple_xas_files
 
-    # xas_menu = wx.Menu()
-    # import_xas_item = xas_menu.Append(wx.NewId(), "Diamond-B07 file (.txt/.dat)")
-    # window.Bind(wx.EVT_MENU, lambda event: import_xas_file(window), import_xas_item)
-    # import_multiple_xas_item = xas_menu.Append(wx.NewId(), "Diamond-B07 Multiple files")
-    # window.Bind(wx.EVT_MENU, lambda event: import_multiple_xas_files(window), import_multiple_xas_item)
-    # import_menu.AppendSubMenu(xas_menu, "XAS")
+    xas_menu = wx.Menu()
+    import_xas_item = xas_menu.Append(wx.NewId(), "Diamond-B07 file (.txt/.dat)")
+    window.Bind(wx.EVT_MENU, lambda event: import_xas_file(window), import_xas_item)
+    import_multiple_xas_item = xas_menu.Append(wx.NewId(), "Diamond-B07 Multiple files")
+    window.Bind(wx.EVT_MENU, lambda event: import_multiple_xas_files(window), import_multiple_xas_item)
+    import_menu.AppendSubMenu(xas_menu, "XAS")
 
     # # Single items for other techniques
     # import_edx_map_item = import_menu.Append(wx.NewId(), "EDX Map (.hdf5)")

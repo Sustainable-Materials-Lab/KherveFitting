@@ -22,7 +22,7 @@ from libraries.FileMenu.SPE_Import import open_spe_file, open_spe_file_dialog
 
 from libraries.FileMenu.VGD_Import import import_vgd_file, import_multiple_vgd_files
 from libraries.FileMenu.AVG_Import import open_avg_file, open_avg_file_direct, import_multiple_avg_files
-# from libraries.FileMenu.XAS_Import import import_xas_file, import_multiple_xas_files
+from libraries.FileMenu.XAS_Import import import_xas_file, import_multiple_xas_files
 
 class ExcelDropTarget(wx.FileDropTarget):
     def __init__(self, window):
@@ -203,21 +203,21 @@ class ExcelDropTarget(wx.FileDropTarget):
             from libraries.FileMenu.VGD_Import import import_vgd_file
             wx.CallAfter(import_vgd_file, self.window, file, False)
             return True
-        # elif file.lower().endswith('.sdp'):
-        #     from libraries.FileMenu.SDP_Import import import_sdp_file
-        #     dlg = wx.MessageDialog(
-        #         self.window,
-        #         "This file is the property of Spectral Data Processor (SDP).\n"
-        #         "You should use the SDP software to view/edit this file.\n\n"
-        #         "I can attempt to import it, but I cannot promise that the data is correct.\n\n"
-        #         "Do you want to proceed with the import?",
-        #         "SDP File - Third-Party Format Notice",
-        #         wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING
-        #     )
-        #     if dlg.ShowModal() == wx.ID_YES:
-        #         wx.CallAfter(import_sdp_file, self.window, file, False)
-        #     dlg.Destroy()
-        #     return True
+        elif file.lower().endswith('.sdp'):
+            from libraries.FileMenu.SDP_Import import import_sdp_file
+            dlg = wx.MessageDialog(
+                self.window,
+                "This file is the property of Spectral Data Processor (SDP).\n"
+                "You should use the SDP software to view/edit this file.\n\n"
+                "I can attempt to import it, but I cannot promise that the data is correct.\n\n"
+                "Do you want to proceed with the import?",
+                "SDP File - Third-Party Format Notice",
+                wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING
+            )
+            if dlg.ShowModal() == wx.ID_YES:
+                wx.CallAfter(import_sdp_file, self.window, file, False)
+            dlg.Destroy()
+            return True
         elif file.lower().endswith(('.h5', '.hdf5')):
             from libraries.FileMenu.Scienta_Import import import_h5_scienta_file
             wx.CallAfter(import_h5_scienta_file, self.window, file)
