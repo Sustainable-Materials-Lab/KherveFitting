@@ -982,42 +982,6 @@ class RegistrationForm(wx.Frame):
 def get_user_location():
     """Try to automatically detect user's detailed location"""
     location_data = {'country': 'Unknown', 'city': 'Unknown', 'region': 'Unknown'}
-
-    try:
-        # Try IP geolocation first for detailed location
-        response = requests.get('http://ip-api.com/json/', timeout=3)
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('status') == 'success':
-                location_data['country'] = data.get('country', 'Unknown')
-                location_data['city'] = data.get('city', 'Unknown')
-                location_data['region'] = data.get('regionName', 'Unknown')
-                print(
-                    f"Location detection successful: {location_data['city']}, {location_data['region']}, {location_data['country']}")
-                return location_data
-    except:
-        pass
-
-    try:
-        # Fallback to system locale
-        system_locale = locale.getdefaultlocale()[0]
-        if system_locale:
-            country_code = system_locale.split('_')[-1]
-            # Basic country code to name mapping for common ones
-            country_map = {
-                'US': 'United States', 'UK': 'United Kingdom', 'GB': 'United Kingdom',
-                'CA': 'Canada', 'AU': 'Australia', 'DE': 'Germany', 'FR': 'France',
-                'IT': 'Italy', 'ES': 'Spain', 'NL': 'Netherlands', 'SE': 'Sweden',
-                'CH': 'Switzerland', 'JP': 'Japan', 'CN': 'China', 'IN': 'India'
-            }
-            country = country_map.get(country_code, 'Unknown')
-            if country != 'Unknown':
-                location_data['country'] = country
-                print(f"Location detection successful via locale: {country}")
-                return location_data
-    except:
-        pass
-
     print("Location detection failed")
     return location_data
 
@@ -1215,18 +1179,7 @@ def check_registration_needed():
 
 def check_usage_tracking_needed(times_opened):
     """Check if usage tracking is needed based on config file setting"""
-    import json
-    import os
-
-    config_file = 'config.json'
-    if os.path.exists(config_file):
-        try:
-            with open(config_file, 'r') as f:
-                config = json.load(f)
-                return config.get('usage_tracking', True)
-        except:
-            return True
-    return True
+    return False
 
 
 def submit_usage_data(times_opened, location_data, panel_theme="Unknown", grid_layout="Unknown", multiplot_palette="Unknown"):
